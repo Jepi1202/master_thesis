@@ -22,7 +22,7 @@ def find_neighbours(positions, cutoff = 2, debug=False):
     return neighbours
 
 
-def calculate_interaction(ri, rj, k, epsilon):
+def calculate_interaction(N, ri, rj, k, epsilon):
     """
     Given the vectors ri and rj, compute the force between them
     """
@@ -96,7 +96,7 @@ def plot_output(output):
     plt.ylim(-5, 5) 
     plt.show()
 
-def main(N, params, boundary, T = 100, dt = 0.01, seed = 20, debug=False):
+def compute_main(N, params, boundary, T = 100, dt = 0.01, seed = 20, debug=False):
     # Parameters
     v0, tau, k, epsilon = params[0], params[1], params[2], params[3] 
     print(f"v0:{v0}, tau:{tau}, k:{k}, epsilon:{epsilon}")
@@ -138,7 +138,7 @@ def main(N, params, boundary, T = 100, dt = 0.01, seed = 20, debug=False):
                 rj = positions[j]
                 if debug:
                     print(f"{t} : particle {i} has neighbours {j} at position {rj}")
-                interaction_force += calculate_interaction(ri, rj, k, epsilon) 
+                interaction_force += calculate_interaction(N, ri, rj, k, epsilon) 
                 interactions[t, j] = 1
             total_force = active_force + interaction_force
 
@@ -148,20 +148,22 @@ def main(N, params, boundary, T = 100, dt = 0.01, seed = 20, debug=False):
             # Update positions
             positions[i] += dt * corrected_force
             angles[i] += reverse_angle*np.pi
+
         if debug:
             print(f'Interactions after timestep {t}')
             print(interactions[t])
 
         # Update noise term in angles
-        # noise = np.random.normal(0, np.sqrt(2 * D * dt), N)
-        # angle += noise    
+        noise = np.random.normal(0, np.sqrt(2 * D * dt), N)
+        angles += noise
+    
         output[t] = positions
 
     return output, interactions
 
 if __name__ == "__main__":
     # Main parameters
-    N = 10
+    N = 500
     v0 = 50 # Active force
     k = 10.  # Stiffness of interaction
     boundary = 20
@@ -170,7 +172,7 @@ if __name__ == "__main__":
     epsilon = 0.  # Attractive component of interaction
     tau = 0.0  # Noise term
     params = v0, tau, k, epsilon
-    output, interactions = main(N, params, boundary)
+    output, interactions = compute_main(N, params, boundary)
     animate(output, interactions, boundary)
     
     

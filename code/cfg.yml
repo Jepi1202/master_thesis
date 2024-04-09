@@ -1,0 +1,73 @@
+normalization:
+    position:
+        minPos: -120
+        maxPos: 120
+    distance:
+        minDistance: 0
+        maxDistance: 6
+    speed:
+        minSpeed: -15
+        maxSpeed: 15
+    radius:
+        minRad: 0
+        maxRad: 2
+        
+        
+feature:
+    distGraph: 6
+    nbHist: 4  # cfr. inShape
+    nbRolloutOut: 10
+    output: speed # distance or speed or acceleration
+    inShape: 17
+    edgeShape: 3
+    featureType: speed # speed of full
+    
+    
+simulation:
+    nbSimLearning: 100
+    nbValidation: 20
+    nbTest: 20
+    parameters:
+        noisy: 0   # 0: not noisy, 1:noisy
+        nMin: 120
+        nMax: 300
+        v0: 60
+        k: 70
+        epsilon: 0.5
+        tau: 3.5
+        T: 1000
+        dt: 0.001
+        threshold: 6
+        R: 1
+        boundary: 120
+        
+        
+training:
+    nbEpoch: 3000
+    trainingModel: trainingModTest.pt
+    bestModel: trainingBestModTest.pt
+    
+    wbName: test
+    rolloutNb: 4
+    batch: 128
+    lr: 0.001
+    dataAugment:
+        translationMin: -100
+        translationMax: 100
+        noisePos: 0.005
+        noiseSpeed: 0.001
+    loss:
+        l1Reg: 0
+        lim: 35 # cfr. boundary
+        lambdaReg: 0.0001
+        lambdaL2Weights: 0.00005
+    scheduler: 1
+    scheduleParams:
+        size: 200
+        gamma: 0.1
+    
+
+validation:
+
+        
+    
