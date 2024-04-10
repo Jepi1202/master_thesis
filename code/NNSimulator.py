@@ -102,30 +102,63 @@ def genSim(model, T, state, pos, train = True, debug = None):
     for j in range(len(INDICES)): 
         state.x[:, INDICES[j]] = normalizeCol(state.x[:, INDICES[j]], MIN_X, MAX_X)
         
+    # if training, keep the computation graph
+    if train:
+
+        yList = []  # list of speeds
+
+        for i in range(T):
+
+            # one-step transition
+            #print(state.x)
+            if debug is not None:
+                y = debug[i]
+            else:
+                y = model(state)
+            yList.append(y)
+
+            # update of the states and positions
+            #with torch.no_grad():  # ?
+
+            if OUTPUT_TYPE == 'speed':
+                # Effect of boundary conditioned by previous position
+                y = boundaryEffect(hist[-1][0], y, BOUNDARY )               
+                state, position = updateData(state, hist[-1][0], y)
+
+
+            elif OUTPUT_TYPE == 'acceleration':
+                v = state.x[:, 2:4]
+                vNext = v + y
+                vNext = boundaryEffect(hist[-1][0], vNext, BOUNDARY )               
+                state, position = updateData(state, hist[-1][0], vNext)
+
+
+
+
+            hist.append(torch.unsqueeze(position, dim = 0))
+
+        return torch.cat(hist, dim = 0), torch.cat(yList, dim = -1)       # [T, N, 2], [T, N, 2]
+
+    # if not training, do not keep the comptutation graph
     else:
-        # if training, keep the computation graph
-        if train:
+        model.eval()
+        with torch.no_grad():
 
-            yList = []  # list of speeds
-
-            for i in range(T):
+            for i in tqdm(range(T)):
 
                 # one-step transition
-                #print(state.x)
+                #print(state.x[0, :])
                 if debug is not None:
                     y = debug[i]
                 else:
                     y = model(state)
-                yList.append(y)
-
-                # update of the states and positions
-                #with torch.no_grad():  # ?
+                # print(hist[-1][0, 0, :])
+                #print(y[0, :])
 
                 if OUTPUT_TYPE == 'speed':
                     # Effect of boundary conditioned by previous position
-                    y = boundaryEffect(hist[-1][0], y, BOUNDARY )               
+                    y = boundaryEffect(hist[-1][0], y, BOUNDARY )
                     state, position = updateData(state, hist[-1][0], y)
-
 
                 elif OUTPUT_TYPE == 'acceleration':
                     v = state.x[:, 2:4]
@@ -134,44 +167,10 @@ def genSim(model, T, state, pos, train = True, debug = None):
                     state, position = updateData(state, hist[-1][0], vNext)
 
 
-
-
                 hist.append(torch.unsqueeze(position, dim = 0))
 
-            return torch.cat(hist, dim = 0), torch.cat(yList, dim = -1)       # [T, N, 2], [T, N, 2]
-
-        # if not training, do not keep the comptutation graph
-        else:
-            model.eval()
-            with torch.no_grad():
-
-                for i in tqdm(range(T)):
-
-                    # one-step transition
-                    #print(state.x[0, :])
-                    if debug is not None:
-                        y = debug[i]
-                    else:
-                        y = model(state)
-                    # print(hist[-1][0, 0, :])
-                    #print(y[0, :])
-
-                    if OUTPUT_TYPE == 'speed':
-                        # Effect of boundary conditioned by previous position
-                        y = boundaryEffect(hist[-1][0], y, BOUNDARY )
-                        state, position = updateData(state, hist[-1][0], y)
-
-                    elif OUTPUT_TYPE == 'acceleration':
-                        v = state.x[:, 2:4]
-                        vNext = v + y
-                        vNext = boundaryEffect(hist[-1][0], vNext, BOUNDARY )               
-                        state, position = updateData(state, hist[-1][0], vNext)
-
-
-                    hist.append(torch.unsqueeze(position, dim = 0))
-
-            model.train()
-            return torch.cat(hist, dim = 0)
+        model.train()
+        return torch.cat(hist, dim = 0)
 
 
 def boundaryEffect(x, v, boundary = BOUNDARY):

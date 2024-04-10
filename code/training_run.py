@@ -1,64 +1,61 @@
 import argparse
+import os
 import sys
 import yaml
-import datetime
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+import wandb
+from typing import Optional, Union
+import cv2
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import matplotlib.pyplot as plt
-import os
-from tqdm import tqdm
-import wandb
 import torch.utils.data as torchData
 from torch.utils.data import Dataset as torchDataset
+from torch.optim.lr_scheduler import StepLR
+from torch.utils.data import DataLoader as DataLoaderPy
 from torch_geometric.data import Dataset, Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import MessagePassing
 from torch_geometric.nn import GATv2Conv, GeneralConv
-from typing import Optional, Union
-from torch.optim.lr_scheduler import StepLR
-from torch.utils.data import DataLoader as DataLoaderPy
-
 from dataLoading import DataGraph, simLoader, simLoader2
-import features as ft       # feature library
+import features as ft
 from features import FEATURE_SHAPE, EDGE_SHAPE
 from NNSimulator import genSim, optimized_getGraph
-import cv2
 from trainingStats import getHeatmap, getHeatmap2
-
-
-
+from norm import normalizeCol
 
 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+with open('cfg.yml', 'r') as file:
+    cfg = yaml.safe_load(file) 
+    
+## Normalization
+NB_HIST = cfg['feature']['nbHist']
+FEATURE_TYPE = cfg['feature']['featureType']
+
+MIN_X = cfg['normalization']['position']['minPos']
+MAX_X = cfg['normalization']['position']['maxPos']
+MIN_Y = cfg['normalization']['position']['minPos']
+MAX_Y = cfg['normalization']['position']['maxPos']
+
+MIN_RAD = cfg['normalization']['radius']['minRad']
+MAX_RAD = cfg['normalization']['radius']['maxRad']
+
+R = cfg['simulation']['parameters']['R']
+LIMIT_DIST = 0.95 * cfg['simulation']['parameters']['boundary']
 
 PATH_MODEL = '/home/jpierre/v2/models'
 PATH_RESULT = '/home/jpierre/v2/results'                                    # to adapt
 PATH_DEPO_MODELS = '/home/jpierre/v2/trained_models'                        # to adapt
 SYS_PATH = sys.path.copy()
 
-with open('cfg.yml', 'r') as file:
-    cfg = yaml.safe_load(file) 
-    
-NB_HIST = cfg['feature']['nbHist']
-MIN_X = cfg['normalization']['position']['minPos']
-MAX_X = cfg['normalization']['position']['maxPos']
-MIN_Y = cfg['normalization']['position']['minPos']
-MAX_Y = cfg['normalization']['position']['maxPos']
-
-R = cfg['simulation']['parameters']['R']
-MIN_RAD = cfg['normalization']['radius']['minRad']
-MAX_RAD = cfg['normalization']['radius']['maxRad']
-
-
-LIMIT_DIST = 0.95 * cfg['simulation']['parameters']['boundary']
-
 #NB_ROLL = cfg['training']['rolloutNb']
-NB_ROLL = 3
+NB_ROLL = 1
 
 
-    
 SPACE_INDICES = []
 for i in range(NB_HIST):
     SPACE_INDICES.append([0+4*i, 1+4*i])
@@ -66,60 +63,13 @@ for i in range(NB_HIST):
 #SPACE_INDICES = [[0,1],[4,5]]                                                       # X, Y elements in node features
 EDGE_INDICES = None                                                        # X, Y elements in edge features
 
-
-def normalizeCol(vect: np.array, minVal:float, maxVal:float)->np.array:
-    """ 
-    Function used in order to apply min-max stand on features
-
-    Args:
-    -----
-        -`vect` (np.array): array to normalize
-        - `minVal` (float): min value in min-max stand
-        - `maxVal` (float): max value in min-max stand
-
-    Returns:
-    --------
-        the normalized vector
-    """
-    assert minVal < maxVal
-    
-    ran = maxVal - minVal
-    return (vect - minVal)/ran
-
-
-def createFolder(path:str)->None:
-    """
-    Function to make a directory
-    
-    Args:
-    -----
-        - `path`: path of the new directory
-    """
-    
-    assert os.path.exists(path) == False
-    
-    os.makedirs(path)
-
-def getTime():
-    infos = datetime.now()
-
-    day = infos.strftime("%Y-%m-%d")  # Format as YYYY-MM-DD
-    time = infos.strftime("%H:%M:%S")  # Format as HH:MM:SS
-
-    timeInfos = f"{day}__{time}"
-
-    return timeInfos
-
-
+#TODO displaying parameters of the learning
 class paramsLearning():
     """ 
     Parameters of the learning
     """
-    def __init__(self,lodaerLearning, loaderSim,loaderEval, nbEpoch:int = 200, wbName: Optional[Union[str, None]] = None,  lr:float = 0.005, wdecay:float = 5e-4, schedule:Optional[Union[tuple, None]] = None, L1LossReg:bool = 0, dataAug:bool = False):
 
-        if wbName is None:
-            timeInfos = getTime()
-            wbName = f'run_{timeInfos}'
+    def __init__(self,lodaerLearning, loaderSim,loaderEval, nbEpoch:int = 200, wbName: Optional[Union[str, None]] = None,  lr:float = 0.005, wdecay:float = 5e-4, schedule:Optional[Union[tuple, None]] = None, L1LossReg:bool = 0, dataAug:bool = False):
 
         self.wbName = wbName
 
@@ -160,7 +110,7 @@ class paramsLearning():
         self.dataAug = dataAug
         
 
-
+#TODO adapt to change the cfg
 def retrieveArgs():
     """ 
     Function to retrieve the args sent to the python code
@@ -184,25 +134,43 @@ def retrieveArgs():
     return args
 
 
-
 def loadModel(modelName:str, inputShape:int = FEATURE_SHAPE, edges_shape = None, path = PATH_MODEL):
     """ 
-    Old import to get the mdoel
+    Function to import the model
+
+    Args:
+    -----
+        - `modelName`: name of the model
+        - `inputShape`: inout shape of the NN
+        - `edges_shape`: edge shape of the NN
+        - `path`: path where the models are
     """
 
     sys.path.append(path)
 
     loadFun = __import__(f'{modelName}', fromlist = ('loadNetwork'))
 
-
     model = loadFun.loadNetwork(inputShape, edges_shape)
 
     return model
 
 
-
-
 def setUp(model, wbName, lr:float = 0.005, wdecay:float = 5e-4, schedule:Optional[Union[tuple, None]] = None):
+    """ 
+    Function to initialize the learning
+
+    Args:
+    -----
+        - `model`:
+        - `wbName`:
+        - `lr`:
+        - `wdecay`:
+        - `schedule`:
+
+    Returns:
+    --------
+        the optimizer and the scheduler
+    """
     wandb.init(project = 'master_thesis', name = f"{wbName}")
 
 
@@ -219,61 +187,79 @@ def setUp(model, wbName, lr:float = 0.005, wdecay:float = 5e-4, schedule:Optiona
     return optimizer, lr_scheduler
 
 
-
-
 def dataAugFun(data, device = DEVICE, indices = SPACE_INDICES, indices2 = EDGE_INDICES):
-    p1 = np.random.random()
-    if p1 < 0.5:   #translation
-        rdNb = np.random.uniform(-500, 500, (1,2))
-        c = torch.from_numpy(np.tile(rdNb, (data.x.shape[0],1))).to(device)
-        
-        if indices is not None:
-            for j in range(len(indices)):
-         
-                data.x[:, indices[j]] += c
-        
-        if indices2 is not None:
-            c = torch.from_numpy(np.tile(rdNb, (data.edge_attr.shape[0],1))).to(device)
-            data.edge_attr[:, indices2] += c
+    """ 
+    Data augmentation function 
+    """
+    if FEATURE_TYPE == 'full':
+        p1 = np.random.random()
+        if p1 < 0.5:   #translation
+            rdNb = np.random.uniform(-500, 500, (1,2))
+            c = torch.from_numpy(np.tile(rdNb, (data.x.shape[0],1))).to(device)
+            
+            if indices is not None:
+                for j in range(len(indices)):
+            
+                    data.x[:, indices[j]] += c
+            
+            if indices2 is not None:
+                c = torch.from_numpy(np.tile(rdNb, (data.edge_attr.shape[0],1))).to(device)
+                data.edge_attr[:, indices2] += c
 
-    # lacks to apply that for the features of the edges ...
-    
-    p2 = np.random.random()
-    if p2 < 0.8:   #translation
-        rdNb = torch.normal(mean=0, std=0.001, size=data.x.shape).to(device)
-        rdNb2 = torch.normal(mean=0, std=0.001, size=data.edge_attr.shape).to(device)
+        # lacks to apply that for the features of the edges ...
         
-        data.x += rdNb
-        data.edge_attr += rdNb2
+        p2 = np.random.random()
+        if p2 < 0.8:   #translation
+            rdNb = torch.normal(mean=0, std=0.001, size=data.x.shape).to(device)
+            rdNb2 = torch.normal(mean=0, std=0.001, size=data.edge_attr.shape).to(device)
+            
+            data.x += rdNb
+            data.edge_attr += rdNb2
 
     return data
 
 
 def normalizationFun(data, indices = SPACE_INDICES, indices2 = EDGE_INDICES):
-    # normalize node features
-    
-    if indices is not None:
-        for j in range(len(SPACE_INDICES)):
-            
-            data.x[:, SPACE_INDICES[j]] = normalizeCol(data.x[:, SPACE_INDICES[j]], MIN_X, MAX_X)
-
-
-    # normalize edge features
-    if indices2 is not None:
-        data.edge_attr[:, indices2] = normalizeCol(data.edge_attr[:, indices2], MIN_X, MAX_X)
+    """
+    Function to normalize data
+    """
+    if FEATURE_TYPE == 'full':
+        # normalize node features
         
+        if indices is not None:
+            for j in range(len(SPACE_INDICES)):
+                
+                data.x[:, SPACE_INDICES[j]] = normalizeCol(data.x[:, SPACE_INDICES[j]], MIN_X, MAX_X)
+
+
+        # normalize edge features
+        if indices2 is not None:
+            data.edge_attr[:, indices2] = normalizeCol(data.edge_attr[:, indices2], MIN_X, MAX_X)
+            
     return data
 
 
+#TODO adapt with gamma for puting more weight on first simulations of rollout
 def lossFun(preds:torch.tensor, gts:torch.tensor, binaries:Optional[Union[None, torch.tensor]] = None, topk = None):
     """ 
-    
+    Function to perform the loss
+
+    Args:
+    -----
+        - `preds`: predictions
+        - `gts`: ground truths
+        - `binaries`: binaries for selection
+        - `topk`:
     """
+
+    # compute the L2 distance
     res = (preds - gts)**2
 
+    # only take the elements that are definded wrt binaries
     if binaries is not None:
         res = res * binaries
         
+    # only select the k worst losses
     res = res.view(-1)
     if topk is not None:
         res, _ = torch.topk(res, topk)
@@ -281,6 +267,7 @@ def lossFun(preds:torch.tensor, gts:torch.tensor, binaries:Optional[Union[None, 
 
     #return F.mse_loss(preds.view(-1), gts.view(-1))
     return torch.mean(res)
+
 
 def train(model, optimizer, lr_scheduler,  paramLearning, path_result_LAST, path_result_MIN, device = DEVICE):
 
@@ -326,8 +313,8 @@ def train(model, optimizer, lr_scheduler,  paramLearning, path_result_LAST, path
                     
             #data = normalizationFun(data)
             
-            _, out = genSim(model, NB_ROLL, data, pos, train = True)
-            #out = model(data)
+            #_, out = genSim(model, NB_ROLL, data, pos, train = True)
+            out = model(data)
             j = j+1
 
 
