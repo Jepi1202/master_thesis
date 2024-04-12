@@ -28,6 +28,8 @@ MAX_RAD = NORMALIZATION['radius']['maxRad']
 NB_LEARNING = SIM['nbSimLearning']
 NB_VAL = SIM['nbValidation']
 NB_TEST = SIM['nbTest']
+INIT_SIM = SIM['initialization']
+INIT_DIST = SIM['initDistance']
 
 
 # parameters of the simulation
@@ -66,7 +68,6 @@ TORCH_MIN = 0
 
 
 #TODO Adapt the rest to automatically change the cfg file ....
-
 def retrieveArgs():
     """ 
     Function to retrieve the args sent to the python code
@@ -89,6 +90,39 @@ def retrieveArgs():
 
     return args
 
+
+def generateFolder(path:str):
+    """ 
+    Function to create the folder where to put the data
+
+    Args:
+    -----
+        - `path` (str): path where to load the data
+
+    Returns:
+    --------
+        The list of the [paht, paht_numpy, path_torch] for the 
+        training, validation and test
+    """
+    
+    res = []
+    
+    p_train = os.path.join(path, 'training')
+    p_val = os.path.join(path, 'validation')
+    p_test = os.path.join(path, 'test')
+    
+    for p in [p_train, p_val, p_test]:
+        p_np = os.path.join(p, 'np_file')
+        p_torch = os.path.join(p, 'torch_file')
+        
+        os.makedirs(p)
+        os.makedirs(p_np)
+        os.makedirs(p_torch)
+        
+        res.append((p, p_np, p_torch))
+                   
+    return res      # [[path, path_numpy, path_torch]]
+        
 
 class SimulationParameters():
     """ 
@@ -178,8 +212,11 @@ def run_sim(path,pathSim,  simNb, n, v0, k, boundary, epsilon, tau, T, dt, seeds
     
     p = params._getSimParams()
 
+    # initial conditions
+    cond = initialConditions(n_i)
+
     # run the simulation
-    resOutput, resInter = sim.compute_main(*p)  
+    resOutput, resInter = sim.compute_main(*p, initialization = cond)  
     paramList = params._getParams()
 
     #TODO update here
@@ -278,59 +315,79 @@ def generate_conds(nbSim):
 
 def generate_conds(nbSim):
 
+    # seed
+    seeds = np.random.randint(0, 100000000, nbSim)
+
+    # simulation parameters
     n = np.random.uniform(NB_CELLS_MIN, NB_CELLS_MAX, nbSim).astype(int)    # 60%
-    v0 = np.ones(nbSim) * VO_PARAMS    #reduce ~ 
+    v0 = np.ones(nbSim) * VO_PARAMS
     k  = np.ones(nbSim) * K_PARAMS
     boundary = np.ones(nbSim) * BOUNDARY
     epsilon = np.ones(nbSim) * EPSILON
     tau = np.ones(nbSim) * TAU
-
-
-    T = np.ones(nbSim) * T_PARAM       # slow down, more timesteps
+    T = np.ones(nbSim) * T_PARAM
     dt = np.ones(nbSim) * DT_PARAM
-
-    seeds = np.random.randint(0, 100000000, nbSim)
-
-    thresholdDist = np.ones(nbSim) *THRESHOLD_DIST
     R = np.ones(nbSim) *R_PARAM
 
-
+    # graph construction
+    thresholdDist = np.ones(nbSim) *THRESHOLD_DIST
 
     return n, v0, k, boundary, epsilon, tau, T, dt, seeds, thresholdDist, R
 
-        
-def generateFolder(path:str):
+
+def initialConditions(n:int = None):
     """ 
-    Function to create the folder where to put the data
+    Generate intial conditions for the simulations
+    Gives the initial positions and the initial angles ([0, 2 pi])
+    of the cells 
 
     Args:
     -----
-        - `path` (str): path where to load the data
+        - `n` (optional): number of cells 
 
     Returns:
     --------
-        The list of the [paht, paht_numpy, path_torch] for the 
-        training, validation and test
+        tuple (pos, angles)
+        pos: np.array [N, 2]
+        angles: np.array [N]
     """
+
+    if INIT_SIM == 'easy':
+        lim = 0.85 * BOUNDARY
+
+        xPos = np.linspace(-lim, lim, 5)
+        yPos = np.linspace(-lim, lim, 5)
+        gridX, gridY = np.meshgrid(xPos, yPos)
+        delta = np.random.uniform(0, INIT_DIST, gridX.shape + (2,))
+
+        gridX2 = gridX + delta[:, :, 0]
+        gridY2 = gridY + delta[:, :, 1]
+
+        pos = np.stack([gridX.ravel(), gridY.ravel()], axis=1)
+        pos_perturbed = np.stack([gridX2.ravel(), gridY2.ravel()], axis=1)
+
+        pos = np.concatenate([pos, pos_perturbed], axis=0)
+
+        angles = np.random.rand(pos.shape[0]) * 2 * np.pi
+
+        return (pos, angles)
     
-    res = []
+
+    elif INIT_SIM == 'circle':
+        return None
     
-    p_train = os.path.join(path, 'training')
-    p_val = os.path.join(path, 'validation')
-    p_test = os.path.join(path, 'test')
-    
-    for p in [p_train, p_val, p_test]:
-        p_np = os.path.join(p, 'np_file')
-        p_torch = os.path.join(p, 'torch_file')
-        
-        os.makedirs(p)
-        os.makedirs(p_np)
-        os.makedirs(p_torch)
-        
-        res.append((p, p_np, p_torch))
-                   
-    return res      # [[path, path_numpy, path_torch]]
-        
+
+    elif INIT_SIM == 'random':
+        assert n is not None
+
+        lim = 0.85 * BOUNDARY
+        pos = np.random.uniform(-lim , lim ,(n,2))
+
+        angles = np.random.rand(n) * 2 * np.pi
+
+        return (pos, angles)
+
+
 
 def main():
 

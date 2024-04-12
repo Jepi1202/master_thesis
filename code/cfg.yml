@@ -27,6 +27,8 @@ simulation:
     nbSimLearning: 100
     nbValidation: 20
     nbTest: 20
+    initialization: 'easy'    # random, easy, circle
+    initDistance: 7
     parameters:
         noisy: 0   # 0: not noisy, 1:noisy
         nMin: 120
