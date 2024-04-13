@@ -1,0 +1,34 @@
+modules:
+  MLP:
+    dropout: 0.1
+    bias: 0.0
+
+  MLP2:
+    dropout: 0.1
+    buas: 0.0
+
+  GN:
+    messageShape: 256
+    hiddenShapeMLP: 256
+    aggr: 'add'
+
+  transformerEncoder:
+    nbBlocks: 6
+
+cramner:
+  encoder: MLP # MLP or transformer
+  MLP:
+    hiddenShape: 128
+  lambdaL1: 0.01
+
+complexPhysics:
+  encoder: MLP
+  nbGNN: 5
+  
+gat:
+  nbGAT: 3
+  heads: 1
+  dropout: 0.4
+  concat: True
+  add_self_loop: False
+  add_value: 0.0
