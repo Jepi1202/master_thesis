@@ -10,9 +10,12 @@ import simulation as sim
 from norm import normalizeCol
 
 
-with open('cfg.yml', 'r') as file:
+PATH = os.path.dirname(os.path.abspath(__file__))
+
+with open(os.path.join(PATH, 'cfg.yml'), 'r') as file:
     cfg = yaml.safe_load(file) 
-    
+
+
 NORMALIZATION = cfg['normalization']
 SIM = cfg['simulation']
 PARAMS = SIM['parameters']
@@ -23,14 +26,12 @@ print(PARAMS)
 MIN_RAD = NORMALIZATION['radius']['minRad']
 MAX_RAD = NORMALIZATION['radius']['maxRad']
 
-
 # number of runs:
 NB_LEARNING = SIM['nbSimLearning']
 NB_VAL = SIM['nbValidation']
 NB_TEST = SIM['nbTest']
 INIT_SIM = SIM['initialization']
 INIT_DIST = SIM['initDistance']
-
 
 # parameters of the simulation
 NOISY_BOOL = PARAMS['noisy']
@@ -46,11 +47,10 @@ THRESHOLD_DIST = PARAMS['threshold']
 R_PARAM = PARAMS['R']
 BOUNDARY = PARAMS['boundary']
 
-
 # nb hist:
 NB_HIST = cfg['feature']['nbHist']
 
-
+#############################################################
 
 SCRATCH = '/simulations'
 #p = '/home/jpierre/v2/part_1_b'
@@ -64,43 +64,8 @@ print(f'Number of lagged values >>> {NB_HIST}')
 # parameters to fine-tune by hand in order to
 # shift the files names
 
-TORCH_MIN = 0       
+TORCH_MIN = 0       # change if want to detect already existing files  
 
-
-
-def generateFolder(path:str):
-    """ 
-    Function to create the folder where to put the data
-
-    Args:
-    -----
-        - `path` (str): path where to load the data
-
-    Returns:
-    --------
-        The list of the [paht, paht_numpy, path_torch] for the 
-        training, validation and test
-    """
-    
-    res = []
-    
-    p_train = os.path.join(path, 'training')
-    p_val = os.path.join(path, 'validation')
-    p_test = os.path.join(path, 'test')
-    
-    for p in [p_train, p_val, p_test]:
-        p_np = os.path.join(p, 'np_file')
-        p_torch = os.path.join(p, 'torch_file')
-        
-        if not os.path.exists(p):
-            os.makedirs(p)
-            os.makedirs(p_np)
-            os.makedirs(p_torch)
-        
-        res.append((p, p_np, p_torch))
-                   
-    return res      # [[path, path_numpy, path_torch]]
-        
 
 class SimulationParameters():
     """ 
@@ -128,11 +93,11 @@ class SimulationParameters():
         
         self.p = (self.v0, self.tau, self.k, self.epsilon)
         
-    def _getParams(self):
+    def _getParams(self)->np.array:
         paramList = np.array([normalizeCol(self.radii, MIN_RAD, MAX_RAD)])
         return paramList
     
-    def _loadParams(self, vect, force:bool = False):
+    def _loadParams(self, vect, force:bool = False)->None:
         self.n = vect[0] 
         if force:   
             self.v0 = vect[1]     
@@ -149,173 +114,36 @@ class SimulationParameters():
             
         self.p = (self.v0, self.tau, self.k, self.epsilon)
         
-    def _getSimParams(self):
+    def _getSimParams(self)->tuple:
         """ 
         Returns the parameters in the good format for the simulation
         """
         return self.n.astype(np.int32), self.p, self.boundary, self.T.astype(np.int32), self.dt, self.seed, self.cutoff, self.radii, self.noiseBool
-
-
-def run_sim(path,pathSim,  simNb, n, v0, k, boundary, epsilon, tau, T, dt, seeds, radii, cutoffs,nbHist, noiseBool, saveBool:bool = False,saveSimBool:bool =False, completePath:bool = False, force:bool = True):
-    """ 
-    Function to run the simulation
-
-    Args:
-    -----
-        - ``
-
-    Retunrs:
-    --------
-
-    """
-
-    params = SimulationParameters()
-
-    # load parameters
-    n_i = n.astype(np.int32)
-    v0_i = v0
-    k_i = k
-    boundary_i = boundary
-    epsilon_i = epsilon
-    tau_i = tau
-    T_i = T
-    dt_i = dt
-
-    seed_i = seeds
     
-    radii_i = radii
-    cutoff = cutoffs
 
-    params._loadParams([n_i, v0_i, tau_i, k_i, epsilon_i, boundary_i, T_i, dt_i, seed_i, cutoff, radii_i, noiseBool], force = force)
-    
-    p = params._getSimParams()
+    def _getInfo(self)->dict:
+        """ 
+        Constructs a dictionnary with informations on the simulation within
+        """
+        d = {}
 
-    # initial conditions
-    cond = initialConditions(n_i)
+        d['n'] = self.n
+        d['v0'] = self.v0
+        d['tau'] = self.tau
+        d['k'] = self.k
+        d['epsilon'] = self.epsilon
+        d['boundary'] = self.boundary
+        d['T'] = self.T
+        d['dt'] = self.dt
+        d['seed'] = self.seed
+        d['cutoff'] = self.cutoff
+        d['radii'] = self.radii
+        d['noiseBool'] = self.noiseBool
 
-    # run the simulation
-    resOutput, resInter = sim.compute_main(*p, initialization = cond)  
-    paramList = params._getParams()
-
-    #TODO update here
-    # save parameters
-    data_dict = {'resOutput': resOutput, 'paramList': paramList}
-
-    # save simulation
-    np.save(os.path.join(pathSim, f'output_{simNb}'), data_dict)
-    
-    # create the features of the simulation
-    nodesFeatures, yVect = ft.getFeatures(resOutput, paramList, nbHist)
-    edgeIndexVect, edgeFeaturesVect = ft.getEdges(resOutput, params.cutoff)
-
-    # save the pt files
-    if saveBool:
-        idx = 0
-        for j in range(len(nodesFeatures)):
-
-            x = nodesFeatures[j]
-            y = yVect[j]
-
-            edgeFeature = edgeFeaturesVect[j]
-            edgeIndex = edgeIndexVect[j]
-
-            data = Data(x=x, 
-                        edge_index=edgeIndex,
-                        edge_attr=edgeFeature,
-                        y=y
-                        ) 
-
-            if completePath:
-                torch.save(data, path)
-            else:
-
-                torch.save(data, os.path.join(path, f'data_sim_{simNb + TORCH_MIN}_nb_{idx}_v2_basic.pt'))
-            idx += 1
+        return d
 
 
-    return nodesFeatures, yVect, edgeIndexVect, edgeFeaturesVect
-
-
-def create_data(path, pathSim, nbSim, n, v0, k, boundary, epsilon, tau, T, dt, seeds, radii, cutoffs,nbHist, noiseBool, saveBool:bool = False, saveSimBool:bool = False, completePath:bool = False):
-    """ 
-    Calls in loop run_sim in order to save the simulations
-    NOTE: just for conciseness of the code
-    """
-
-    for i in tqdm(range(len(seeds))):
-
-        # loop throught the parameters
-        n_i = n[i].astype(np.int32)
-        v0_i = v0[i]
-        k_i = k[i]
-        boundary_i = boundary[i]
-        epsilon_i = epsilon[i]
-        tau_i = tau[i]
-        T_i = T[i]
-        dt_i = dt[i]
-        seed_i = seeds[i]
-        radii_i = radii[i]
-        cutoff = cutoffs[i]
-
-
-        if completePath:
-            _ = run_sim(path[i], pathSim[i],  i, n_i, v0_i, k_i, boundary_i, epsilon_i, tau_i, T_i, dt_i, seed_i, radii_i, cutoff, nbHist, noiseBool, saveBool,saveSimBool = saveSimBool, completePath = completePath)
-        else:
-            _ = run_sim(path, pathSim,  i, n_i, v0_i, k_i, boundary_i, epsilon_i, tau_i, T_i, dt_i, seed_i, radii_i, cutoff, nbHist, noiseBool, saveBool)
-
-
-"""
-
-OLD FUNCTION TO CREATE THE PARAMETERS
-def generate_conds(nbSim):
-
-    n = np.random.uniform(150, 300, nbSim).astype(int)    # 60%
-    v0 = np.ones(nbSim) * 10    #reduce ~ 
-    k  = np.ones(nbSim) * 10
-    boundary = np.ones(nbSim) * 40
-    epsilon = np.ones(nbSim) * 0.3
-    tau = np.ones(nbSim) * 0.5
-
-
-    T = np.ones(nbSim) * 400       # slow down, more timesteps
-    dt = np.ones(nbSim) * 0.01
-
-    seeds = np.random.randint(0, 100000000, nbSim)
-
-    thresholdDist = np.ones(nbSim) *6.0
-    R = np.ones(nbSim) *1.0
-
-
-
-    return n, v0, k, boundary, epsilon, tau, T, dt, seeds, thresholdDist, R
-"""
-
-
-def generate_conds(nbSim):
-
-    # seed
-    seeds = np.random.randint(0, 100000000, nbSim)
-
-    # simulation parameters
-    n = np.random.uniform(NB_CELLS_MIN, NB_CELLS_MAX, nbSim).astype(int)    # 60%
-    if INIT_SIM == 'easy':
-        n = np.ones(nbSim) * 50 #TODO parameter later
-    v0 = np.ones(nbSim) * VO_PARAMS
-    k  = np.ones(nbSim) * K_PARAMS
-    boundary = np.ones(nbSim) * BOUNDARY
-    epsilon = np.ones(nbSim) * EPSILON
-    tau = np.ones(nbSim) * TAU
-    T = np.ones(nbSim) * T_PARAM
-    dt = np.ones(nbSim) * DT_PARAM
-    R = np.ones(nbSim) *R_PARAM
-
-    # graph construction
-    thresholdDist = np.ones(nbSim) *THRESHOLD_DIST
-
-    return n, v0, k, boundary, epsilon, tau, T, dt, seeds, thresholdDist, R
-
-
-def initialConditions(n:int = None):
+def initialConditions(n:int = None)->tuple:
     """ 
     Generate intial conditions for the simulations
     Gives the initial positions and the initial angles ([0, 2 pi])
@@ -368,10 +196,199 @@ def initialConditions(n:int = None):
         return (pos, angles)
 
 
+def generateFolder(path:str):
+    """ 
+    Function to create the folder where to put the data
+
+    Args:
+    -----
+        - `path` (str): path where to load the data
+
+    Returns:
+    --------
+        The list of the [paht, paht_numpy, path_torch] for the 
+        training, validation and test
+    """
+    
+    res = []
+    
+    p_train = os.path.join(path, 'training')
+    p_val = os.path.join(path, 'validation')
+    p_test = os.path.join(path, 'test')
+    
+    for p in [p_train, p_val, p_test]:
+        p_np = os.path.join(p, 'np_file')
+        p_torch = os.path.join(p, 'torch_file')
+        
+        if not os.path.exists(p):
+            os.makedirs(p)
+            os.makedirs(p_np)
+            os.makedirs(p_torch)
+        
+        res.append((p, p_np, p_torch))
+                   
+    return res      # [[path, path_numpy, path_torch]]
+        
+
+def generateParams(nbSim:int)->tuple:
+    """
+    Generates the parameters for the simulator
+
+    Args:
+    -----
+        - `nbSim` (int): number of simulations
+
+    Returns:
+    --------
+        the parameters of the simlation
+        (n, v0, k, boundary, epsilon, tau, T, dt, seeds, thresholdDist, R)
+        - n: number of cells
+        - v0: active speed
+        - k
+        - boundary
+        - epsilon
+        - tau
+        - T
+        - dt
+        - seeds
+        - thresholdDist
+        - R
+    """
+
+    # seed
+    seeds = np.random.randint(0, 100000000, nbSim)
+
+    # simulation parameters
+    n = np.random.uniform(NB_CELLS_MIN, NB_CELLS_MAX, nbSim).astype(int)    # 60%
+    if INIT_SIM == 'easy':
+        n = np.ones(nbSim) * 50 #TODO parameter later
+    v0 = np.ones(nbSim) * VO_PARAMS
+    k  = np.ones(nbSim) * K_PARAMS
+    boundary = np.ones(nbSim) * BOUNDARY
+    epsilon = np.ones(nbSim) * EPSILON
+    tau = np.ones(nbSim) * TAU
+    T = np.ones(nbSim) * T_PARAM
+    dt = np.ones(nbSim) * DT_PARAM
+    R = np.ones(nbSim) *R_PARAM
+
+    # graph construction
+    thresholdDist = np.ones(nbSim) *THRESHOLD_DIST
+
+
+    res = []
+    d = {}
+
+    for i in range(nbSim):
+        parameters = SimulationParameters()
+        parameters._loadParams([n[i], v0[i], tau[i], k[i], epsilon[i], boundary[i], T[i], dt[i], seeds[i], thresholdDist[i], R[i], NOISY_BOOL], force = True)
+        res.append(parameters)
+        d[i] = parameters._getInfo()
+
+    return res, d
+
+
+def runSim(pathTorch:str, pathSim:str, params:SimulationParameters, cond:tuple, nbHist:int = NB_HIST, saveBool:bool = False)-> tuple:
+    """ 
+    Function to run the simulation
+
+    Args:
+    -----
+        - `pathTorch`: path to the torch files
+        - `pathSim`: path to the simulations
+        - `params`: parameters of the simulation
+        - `cond`: tuple of conditions
+        - `nbHist`: number of lagged values
+        - `saveBool`: boolean for saving or not
+
+    Retunrs:
+    --------
+
+    """
+    
+    p = params._getSimParams()
+
+    # run the simulation
+    resOutput, resInter = sim.compute_main(*p, initialization = cond)  
+    paramList = params._getParams()
+
+    # save simulation
+    #np.save(os.path.join(pathSim, f'output_{simNb}'), resOutput)
+    np.save(pathSim, resOutput)
+
+    # create the features of the simulation
+    nodesFeatures, yVect = ft.getFeatures(resOutput, paramList, nbHist)
+    edgeIndexVect, edgeFeaturesVect = ft.getEdges(resOutput, params.cutoff)
+
+    # save the pt files
+    if saveBool:
+        idx = 0
+        for j in range(len(nodesFeatures)):
+
+            x = nodesFeatures[j]
+            y = yVect[j]
+
+            edgeFeature = edgeFeaturesVect[j]
+            edgeIndex = edgeIndexVect[j]
+
+            data = Data(x=x, 
+                        edge_index=edgeIndex,
+                        edge_attr=edgeFeature,
+                        y=y
+                        ) 
+
+            #torch.save(data, os.path.join(pathTorch, f'data_sim_{simNb + TORCH_MIN}_nb_{idx}_v2_basic.pt'))
+            torch.save(data, f'{pathTorch}_step_{idx}.pt')
+            idx += 1
+
+
+    return nodesFeatures, yVect, edgeIndexVect, edgeFeaturesVect
+
+
+def create_data(nbSim:int, pathTorch:str, pathSim:str)->None:
+
+    """ 
+    Function for creating the 
+
+    Args:
+    -----
+        - ``
+
+    Returns:
+    --------
+        - ``
+    """
+
+    # generate conditions
+    params, infos = generateParams(nbSim)
+
+
+    # create simulations
+    for i in tqdm(range(len(params))):
+
+        # loop throught the parameters
+        n_i = params[i].n.astype(np.int32)
+        
+        # get initial conditions
+        conds = initialConditions(n_i)
+
+        # create the path for torch and np files
+        pathT = os.path.join(pathTorch, f'sim_{i}')
+        pathS = os.path.join(pathSim, f'simulation_{i}.npy')
+
+        # create simulation
+        _ = runSim(pathT, pathS,  params, conds, saveBool=True)
+
+    # save dict
+    #TODO
+
 
 def main():
 
     #NOTE: could be more concise but remains as such for better maniability
+    nbSimLearning = NB_LEARNING
+    nbSimVal = NB_VAL
+    nbSimTest = NB_TEST
+
            
     paths = generateFolder(p)
     nbHist =  NB_HIST
@@ -380,41 +397,26 @@ def main():
     # LEARNING
     #########################################
 
-    nbSim = NB_LEARNING
-    
-    n, v0, k, boundary, epsilon, tau, T, dt, seeds, thresholdDist, R = generate_conds(nbSim)
-    
+
     path, npPath, torchPath = paths[0]
 
-    _ = create_data(torchPath, npPath, nbSim, n, v0, k, boundary, epsilon, tau, T, dt, seeds, R, thresholdDist, nbHist, noiseBool = False, saveBool = True, saveSimBool = True, completePath = False)
+    _ = create_data(nbSimLearning, torchPath, npPath)
     
-
     #########################################
     # validation
     #########################################
-
-
-    nbSim = NB_VAL
-    
-    n, v0, k, boundary, epsilon, tau, T, dt, seeds, thresholdDist, R = generate_conds(nbSim)
     
     path, npPath, torchPath = paths[1]
     
-    _ = create_data(torchPath, npPath, nbSim, n, v0, k, boundary, epsilon, tau, T, dt, seeds, R, thresholdDist, nbHist, noiseBool = False, saveBool = True, saveSimBool = True, completePath = False)
-    
+    _ = create_data(nbSimVal, torchPath, npPath)    
 
     #########################################
     # test
     #########################################
     
-    nbSim = NB_TEST
-    
-    n, v0, k, boundary, epsilon, tau, T, dt, seeds, thresholdDist, R = generate_conds(nbSim)
-    
     path, npPath, torchPath = paths[2]
     
-    _ = create_data(torchPath, npPath, nbSim, n, v0, k, boundary, epsilon, tau, T, dt, seeds, R, thresholdDist, nbHist, noiseBool = False, saveBool = True, saveSimBool = True, completePath = False)
-
+    _ = create_data(nbSimTest, torchPath, npPath)  
 
         
 if __name__ == '__main__':

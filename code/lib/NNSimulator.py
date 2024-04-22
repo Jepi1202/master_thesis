@@ -1,14 +1,15 @@
 import numpy as np
 import torch
 import yaml
+import os
 from tqdm import tqdm
 from torch_geometric.data import Data
 from norm import normalizeCol
 
+PATH = os.path.dirname(os.path.abspath(__file__))
 
-with open('cfg.yml', 'r') as file:
+with open(os.path.join(PATH, 'cfg.yml'), 'r') as file:
     cfg = yaml.safe_load(file) 
-
 
 
 OUTPUT_TYPE = cfg['feature']['output']
@@ -25,11 +26,6 @@ MAX_Y = cfg['normalization']['position']['maxPos']
 
 
 NB_HIST = cfg['feature']['nbHist']
-INDICES = []
-for i in range(NB_HIST):
-    INDICES.append([0+4*i, 1+4*i])
-
-
 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -43,12 +39,10 @@ def distance(v1, v2):
 
 class NNSimulator():
     def __init__(self, model):
-
         self.model = model
 
 
     def runSim(self, T, state, debug = None):
-
         return genSim(self.model, T, state, train = False, debug = debug)
         
         
@@ -72,18 +66,13 @@ def genSim(model, T, state, pos, train = True, debug = None):
 
     pos = pos.to(DEVICE)
     hist = [torch.unsqueeze(pos, dim = 0)]          # [ [1, N, 2] ]
-    
-    # normalize the first state
-    #for j in range(len(INDICES)): 
-    #    state.x[:, INDICES[j]] = normalizeCol(state.x[:, INDICES[j]], MIN_X, MAX_X)
-        
+
     # if training, keep the computation graph
     if train:
 
         yList = []  # list of speeds
 
         for i in range(T):
-
             # one-step transition
 
             if debug is not None:
@@ -97,14 +86,14 @@ def genSim(model, T, state, pos, train = True, debug = None):
 
             if OUTPUT_TYPE == 'speed':
                 # Effect of boundary conditioned by previous position
-                y = boundaryEffect(hist[-1][0], y, BOUNDARY )               
+                y = boundaryEffect(hist[-1][0], y, BOUNDARY )
                 state, position = updateData(state, hist[-1][0], y)
 
 
             elif OUTPUT_TYPE == 'acceleration':
                 v = state.x[:, :2]
                 vNext = v + y
-                vNext = boundaryEffect(hist[-1][0], vNext, BOUNDARY )               
+                vNext = boundaryEffect(hist[-1][0], vNext, BOUNDARY)
                 state, position = updateData(state, hist[-1][0], vNext)
 
             hist.append(torch.unsqueeze(position, dim = 0))
@@ -143,7 +132,20 @@ def genSim(model, T, state, pos, train = True, debug = None):
         return torch.cat(hist, dim = 0)
 
 
-def boundaryEffect(x, v, boundary = BOUNDARY):
+def boundaryEffect(x:np.array, v:np.array, boundary:float = BOUNDARY):
+    """ 
+    Function to apply boundary effects
+
+    Args:
+    -----
+        - `x`: positions
+        - `v`: speeds
+        - `boundary`: fronteers
+
+    Returns:
+    --------
+        the speeds affected to 
+    """
     
     for j in range(x.shape[0]):
         if x[j, 0] < - boundary or x[j, 0] > boundary:
