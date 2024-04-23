@@ -5,6 +5,7 @@ import os
 from tqdm import tqdm
 from torch_geometric.data import Data
 from norm import normalizeCol
+from features import optimized_getGraph
 
 PATH = os.path.dirname(os.path.abspath(__file__))
 
@@ -227,56 +228,6 @@ def getGraph(mat_t, threshold = THRESHOLD_DIST):
     distList = torch.cat(distList, dim = 0)
 
     return distList, indices
-
-def optimized_getGraph(mat_t, threshold=THRESHOLD_DIST):
-    """
-    Optimized function to compute the graph for PyTorch Geometric.
-
-    Args:
-    -----
-        - `mat_t` (np.array): 2D np array (matrix at a given timestep)
-        - `threshold` (float): Distance threshold for connecting vertices
-
-    Returns:
-    --------
-        - `distList` (torch.Tensor): Tensor of distances and direction cosines.
-        - `indices` (torch.Tensor): Tensor of graph indices.
-    """
-    num_points = mat_t.shape[0]
-    # Expand dims to broadcast and compute all pairwise distances
-    mat_expanded = np.expand_dims(mat_t, 1)  # Shape: [N, 1, 2]
-    all_dists = np.sqrt(np.sum((mat_expanded - mat_t)**2, axis=2))  # Shape: [N, N]
-
-    # Identify pairs below the threshold, excluding diagonal
-    ix, iy = np.triu_indices(num_points, k=1)
-    valid_pairs = all_dists[ix, iy] < threshold
-
-    # Filter pairs by distance threshold
-    filtered_ix, filtered_iy = ix[valid_pairs], iy[valid_pairs]
-    distances = all_dists[filtered_ix, filtered_iy]
-
-    # Calculate direction vectors and angles
-    direction_vectors = mat_t[filtered_iy] - mat_t[filtered_ix]
-    angles = np.arctan2(direction_vectors[:, 1], direction_vectors[:, 0])
-
-    cos_theta = np.cos(angles)
-    sin_theta = np.sin(angles)
-
-    # Normalize distances and create distance vectors
-    normalized_dists = normalizeCol(distances, MIN_DIST, MAX_DIST)
-    dist_vectors = np.stack([normalized_dists, cos_theta, sin_theta], axis=1)
-
-    # Double entries for bidirectional edges
-    doubled_indices = np.vstack([np.stack([filtered_ix, filtered_iy], axis=1),
-                                 np.stack([filtered_iy, filtered_ix], axis=1)])
-    doubled_dist_vectors = np.vstack([dist_vectors, dist_vectors * [1, -1, -1]])
-
-    # Convert to tensors
-    indices_tensor = torch.tensor(doubled_indices.T, dtype=torch.long)
-    dist_tensor = torch.tensor(doubled_dist_vectors, dtype=torch.float)
-
-    return dist_tensor, indices_tensor
-
 
 
 def updateData(prevState, prevPose, speed, device = DEVICE, threshold = THRESHOLD_DIST):

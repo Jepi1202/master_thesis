@@ -344,3 +344,6 @@ def optimized_getGraph(mat_t, threshold=THRESHOLD_DIST):
     dist_tensor = torch.tensor(doubled_dist_vectors, dtype=torch.float)
 
     return dist_tensor, indices_tensor
+
+
+# new getGraph for NNSimulator

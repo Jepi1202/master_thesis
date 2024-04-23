@@ -1,7 +1,11 @@
 import matplotlib.pyplot as plt
-import networkx as nx
+#import networkx as nx
 import matplotlib.colors as mcolors
+import cv2
+import numpy as np
 
+
+"""
 def display_graph(edges, node_positions, edge_values, minVal = 0, maxVal = 2, display = False, colorbar = False):
     G = nx.Graph()
     G.add_nodes_from(node_positions.keys())
@@ -30,3 +34,37 @@ def display_graph(edges, node_positions, edge_values, minVal = 0, maxVal = 2, di
     
     if display:
         plt.show()
+"""
+
+
+def create_simulation_video_cv2(data, filename='simulation.mp4', fps=10, size=(600, 600)):
+    """
+    Creates an MP4 video from a PyTorch tensor representing cell movements using cv2.
+
+    Parameters:
+    - data: A PyTorch tensor of shape [T, N, 2], where T is the number of timesteps,
+            N is the number of cells, and 2 corresponds to the coordinates (x, y).
+    - filename: Name of the output MP4 file.
+    - fps: Frames per second for the output video.
+    - size: Size of the output video frame.
+    """
+    # Convert the data to numpy for easier manipulation
+    data_np = data
+    
+    # Normalize coordinates to fit within the video frame size
+    data_np -= data_np.min(axis=(0, 1), keepdims=True)
+    data_np /= data_np.max(axis=(0, 1), keepdims=True)
+    data_np *= np.array([size[0] - 1, size[1] - 1])
+    
+    # Define the codec and create VideoWriter object
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Be sure to use lowercase
+    out = cv2.VideoWriter(filename, fourcc, fps, size)
+    
+    for i in range(data_np.shape[0]):
+        frame = np.zeros((size[1], size[0], 3), dtype=np.uint8)
+        for x, y in data_np[i]:
+            # Draw the cell as a circle
+            cv2.circle(frame, (int(x), int(y)), radius=5, color=(0, 255, 0), thickness=-1)
+        out.write(frame)
+    
+    out.release()
