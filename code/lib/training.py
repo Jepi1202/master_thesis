@@ -24,18 +24,18 @@ PATH = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(PATH, 'cfg.yml'), 'r') as file:
     cfg = yaml.safe_load(file) 
 
-FEATURE_SHAPE = ...
-EDGE_SHAPE = ...
-R_PARAM = ...
+FEATURE_SHAPE = 9
+EDGE_SHAPE = 3
+R_PARAM = 0.1
 MIN_RAD = cfg['normalization']['radius']['minRad']
 MAX_RAD = cfg['normalization']['radius']['maxRad']
 
-
+print('loading training')
 
 PATH_MODEL = '/home/jpierre/v2/models'
 PATH_RESULT = '/home/jpierre/v2/results'                                    # to adapt
 PATH_DEPO_MODELS = '/home/jpierre/v2/trained_models' 
-DEVICE = 'cuda:0'
+DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 class paramsLearning():
@@ -43,7 +43,7 @@ class paramsLearning():
     Parameters of the learning
     """
 
-    def __init__(self,):
+    def __init__(self):
 
         self.wbName = None
         self.nbEpoch = None
@@ -86,7 +86,10 @@ class paramsLearning():
         self.limitDist = float('inf')
 
         self.pathSaveFull = None
-        
+
+        self.nbRoll = None      # new
+        self.gammaLoss = [0.95 ** i for i in range(80)]
+        self.batchRollout = None
 
     def _loadParameters(self, params = None):
         if params is None:
@@ -131,6 +134,8 @@ class paramsLearning():
         print(f'Probabiltiy of data augmentation >>>> {self.probDataAug}')
         print(f'Standard deviation of speed >>>> {self.stdSpeed}')
         print(f'Standard deviation displacement >>>> {self.stdDeltaPos}')
+
+
 
 
 def loadModel(modelName:str, inputShape:int = FEATURE_SHAPE, edges_shape = EDGE_SHAPE, path = PATH_MODEL):
@@ -285,7 +290,9 @@ def evaluate(model, params:paramsLearning, device = DEVICE):
                 d = d.to(device)
                 res = model(d)  
                 
-                evalLoss += torch.nn.functional.l1_loss(res.reshape(-1), d.y.reshape(-1))
+                evalLoss += torch.nn.functional.l1_loss(res.reshape(-1), d.y[:, :2].reshape(-1))
+                
+                break
                 
 
             #nb grad is none for normalization layer 
@@ -300,6 +307,7 @@ def evaluate(model, params:paramsLearning, device = DEVICE):
 
         if loaderSim is not None:
 
+
             for d, _ in loaderSim:
                         
                 d = torch.squeeze(d, dim = 0).numpy()
@@ -309,8 +317,7 @@ def evaluate(model, params:paramsLearning, device = DEVICE):
                 attr, inds = ft.optimized_getGraph(d[5, :, :].copy())
                 s = Data(x = x[4], edge_attr = attr, edge_index = inds).to(DEVICE)
                 res = genSim(model, 80, s, torch.from_numpy(d[5, :, :].copy()).float(), train = False)
-
-                
+                                
                 evalLossSim += torch.nn.functional.l1_loss(res.reshape(-1), torch.from_numpy(d[5:86, :, :].copy()).reshape(-1).to(DEVICE))
 
 
@@ -341,13 +348,24 @@ def train_1step(model, params:paramsLearning, device = DEVICE, debug:bool = True
     for epoch in range(nbEpoch):
         for data, _ in tqdm(loader):
             optimizer.zero_grad()
-            bina = (torch.abs(data.x[:, 0]) <= limitDist) & (torch.abs(data.x[:, 1]) <= limitDist)
-            bina = bina.repeat(2, 1).swapaxes(0,1).to(device)
+            #bina = (torch.abs(data.x[:, 0]) <= limitDist) & (torch.abs(data.x[:, 1]) <= limitDist)
+            #bina = bina.repeat(2, 1).swapaxes(0,1).to(device)
 
             data = data.to(device)
+            pos = data.x[:, :2].clone()
+
+            # limitDist ===  boundary now ...
+            #bina = (torch.abs(pos[:, 0]) <= 120) & (torch.abs(pos[:, 1]) <= 120)
+            #bina = bina.repeat(2, 1).swapaxes(0,1).to(device)
+
+            data.x = data.x[:, 2:]
+
+            bina = None
+
+            
             y = data.y
 
-            data = dataAugFun(data)
+            data = dataAugFun(data, params = params)
 
             out = model(data)
 
@@ -370,24 +388,115 @@ def train_1step(model, params:paramsLearning, device = DEVICE, debug:bool = True
                     max_param_value = max(torch.max(torch.abs(param)).item() for param in model.parameters())
                     #wandb.log({'step': i, 'epoch':epoch, 'Training Loss': loss.item(), 'Max_paramVal':max_param_value, 'loss pred': loss0, 'L1 Reg':loss1})
                     wandb.log({'step': i, 'epoch':epoch, 'Max_paramVal':max_param_value, 'loss pred': loss0, 'L1 Reg':loss1})
+                    
 
-
-        if ((i+1) % 500 == 0 or i == 0):
-            model.eval()
-            with torch.no_grad():
-                evaluate(model, params, device = device)
-            model.train()
-
-
-
-        if (i % 10000) == 0:
-            torch.save(model.state_dict(), pathSave)
+            if ((i+1) % 500 == 0 or i == 0):
+                model.eval()
+                with torch.no_grad():
+                    evalLoss, evalLossSim = evaluate(model, params, device = device)
+                    wandb.log({'step': i,'eval_loss': evalLoss, 'sim loss': evalLossSim})
+                model.train()
 
 
 
-        i += 1
+            if (i % 10000) == 0:
+                torch.save(model.state_dict(), pathSave)
+
+
+
+            i += 1
 
 
     return model
 
 
+def train_roll(model, params:paramsLearning, device = DEVICE, debug:bool = True):
+    loader = params.loader
+    nbEpoch = params.nbEpoch
+    optimizer = params.optimizer
+    limitDist = params.limitDist
+
+    topk = params.topk
+    scaleLoss = params.lossScaling
+    scaleL1 = params.L1LossReg
+
+    pathSave = params.pathSaveFull
+
+    nbRoll = params.nbRoll
+    gamma = torch.tensor(params.gammaLoss).to(device)
+    batchRollout = params.batchRollout
+    # apply some gamma later ...
+
+
+    model.train()
+    i = 0
+    j = 0
+    cumLoss = 0
+
+    for epoch in range(nbEpoch):
+            
+        for data, idx in tqdm(loader):
+            
+            optimizer.zero_grad()
+
+            nb_rolling = np.random.randint(1, nbRoll+1)
+            
+            data = data.to(DEVICE)
+
+            pos  = data.x[:, :2].clone()
+            data.x = data.X[:, 2:]
+            y = data.y
+
+            bina = None
+
+
+            if nb_rolling > 1:                 
+                _, out = genSim(model, nb_rolling, data, pos, train = True)
+            else:
+                out = model(data)
+
+            
+            loss0 = scaleLoss * lossFun(out, y[:, :2], bina, topk = topk)
+            loss1 = scaleL1 * model.L1Reg(data)
+            loss = loss0 + loss1
+
+            cumLoss += loss
+
+
+            if (j+1)%batchRollout == 0:
+                cumLoss.backward()
+                optimizer.step()
+
+                if debug:
+                    max_grad_value = max(torch.max(torch.abs(param.grad)).item() for param in model.parameters() if param.grad is not None)
+                    wandb.log({'max_gradVal':max_grad_value})
+
+                cumLoss = 0
+
+
+
+            if debug:
+
+                if ((i+1) % 25 == 0 or i == 0):
+                
+                    max_param_value = max(torch.max(torch.abs(param)).item() for param in model.parameters())
+                    wandb.log({'step': i, 'epoch':epoch, 'Max_paramVal':max_param_value, 'loss pred': loss0, 'L1 Reg':loss1})
+                    
+
+
+            if ((i+1) % 500 == 0 or i == 0):
+                model.eval()
+                with torch.no_grad():
+                    evalLoss, evalLossSim = evaluate(model, params, device = device)
+                    wandb.log({'step': i,'eval_loss': evalLoss, 'sim loss': evalLossSim})
+                model.train()
+
+
+            if (i % 10000) == 0:
+                torch.save(model.state_dict(), pathSave)
+
+            
+            i += 1
+            
+
+    return model

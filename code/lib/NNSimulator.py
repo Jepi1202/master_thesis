@@ -6,6 +6,7 @@ from tqdm import tqdm
 from torch_geometric.data import Data
 from norm import normalizeCol
 from features import optimized_getGraph
+from tools import create_simulation_video_cv2_norm
 
 PATH = os.path.dirname(os.path.abspath(__file__))
 
@@ -237,3 +238,29 @@ def updateData(prevState, prevPose, speed, device = DEVICE, threshold = THRESHOL
     newGraph, newInds = optimized_getGraph(nextPose.cpu().detach().numpy().copy())
 
     return Data(x = newS, edge_index = newInds, edge_attr = newGraph).to(device), nextPose
+
+
+def getSimulationVideo(model:torch.tensor, initPos:torch.tensor, nbTimesteps:int, initState:torch.tensor, outputPath:str) -> torch.tensor:
+    """ 
+    Function to create a simulation from the model
+
+    Args:
+    -----
+        - `model`
+        - `initPos`
+        - `initState`
+        - `nbTimesteps`
+        - `outputPath`
+
+    Retruns:
+    --------
+        tensor of the different positions
+    """
+
+    simulator = NNSimulator(model)
+
+    res = simulator.runSim(nbTimesteps, initState, initPos)
+
+    create_simulation_video_cv2(res, outputPath, fps = 10, size = (600,600))
+
+    return res

@@ -130,8 +130,10 @@ def getSpeedFeatures(mat: np.array, nb: int)->np.array:
             s[(i+1):, :, :] = speeds[:-i, :, :]
             res = np.concatenate((res, s), axis = -1)
         else:
+
             s[(i+1):, :, :] = speeds
-            res = s
+            res = np.concatenate((mat.copy(), s), axis = -1)
+            #res = s
             
     return res
 
@@ -249,7 +251,7 @@ def getEdges2(mat:np.array,threshold:float = THRESHOLD_DIST)->tuple:
 
                     direction_vector = mat[t, j, :] - mat[t, i, :]
                     
-                    dist = normalizeCol(dist.copy(), MIN_DIST, MAX_DIST)
+                    #dist = normalizeCol(dist.copy(), MIN_DIST, MAX_DIST)
                                                             
                     distList.append(torch.tensor([dist, direction_vector[0], direction_vector[1]], dtype=torch.float).unsqueeze(0))
                     distList.append(torch.tensor([dist, direction_vector[1], direction_vector[0]], dtype=torch.float).unsqueeze(0))
@@ -330,14 +332,14 @@ def optimized_getGraph(mat_t, threshold=THRESHOLD_DIST):
     sin_theta = np.sin(angles)
 
     # Normalize distances and create distance vectors
-    normalized_dists = normalizeCol(distances, MIN_DIST, MAX_DIST)
+    #normalized_dists = normalizeCol(distances, MIN_DIST, MAX_DIST)
 
     # Double entries for bidirectional edges
     doubled_indices = np.vstack([np.stack([filtered_ix, filtered_iy], axis=1),
                                  np.stack([filtered_iy, filtered_ix], axis=1)])
     
-    doubled_dist_vectors = np.vstack([np.stack([normalized_dists, direction_vectors[:, 0], direction_vectors[:, 1]], axis=1),
-                                      np.stack([normalized_dists, direction_vectors[:, 1], direction_vectors[:, 0]], axis=1)])
+    doubled_dist_vectors = np.vstack([np.stack([distances, direction_vectors[:, 0], direction_vectors[:, 1]], axis=1),
+                                      np.stack([distances, direction_vectors[:, 1], direction_vectors[:, 0]], axis=1)])
 
     # Convert to tensors
     indices_tensor = torch.tensor(doubled_indices.T, dtype=torch.long)

@@ -52,7 +52,8 @@ NB_HIST = cfg['feature']['nbHist']
 
 #############################################################
 
-SCRATCH = '/simulations'
+SCRATCH = '/master/data'
+print(os.path.exists(SCRATCH))
 #p = '/home/jpierre/v2/part_1_b'
 p = SCRATCH
 print(f'Deposing files in depository >>>> {p}')
@@ -163,8 +164,8 @@ def initialConditions(n:int = None)->tuple:
     if INIT_SIM == 'easy':
         lim = 0.85 * BOUNDARY
 
-        xPos = np.linspace(-lim, lim, 20)
-        yPos = np.linspace(-lim, lim, 20)
+        xPos = np.linspace(-lim, lim, 10)
+        yPos = np.linspace(-lim, lim, 10)
         gridX, gridY = np.meshgrid(xPos, yPos)
         delta = np.random.uniform(0, INIT_DIST, gridX.shape + (2,))
 
@@ -261,7 +262,7 @@ def generateParams(nbSim:int)->tuple:
     # simulation parameters
     n = np.random.uniform(NB_CELLS_MIN, NB_CELLS_MAX, nbSim).astype(int)    # 60%
     if INIT_SIM == 'easy':
-        n = np.ones(nbSim) * 50 #TODO parameter later
+        n = np.ones(nbSim) * 200 #TODO parameter later
     v0 = np.ones(nbSim) * VO_PARAMS
     k  = np.ones(nbSim) * K_PARAMS
     boundary = np.ones(nbSim) * BOUNDARY
@@ -376,7 +377,7 @@ def create_data(nbSim:int, pathTorch:str, pathSim:str)->None:
         pathS = os.path.join(pathSim, f'simulation_{i}.npy')
 
         # create simulation
-        _ = runSim(pathT, pathS,  params, conds, saveBool=True)
+        _ = runSim(pathT, pathS,  params[i], conds, saveBool=True)
 
     # save dict
     #TODO

@@ -8,9 +8,23 @@ import os
 from tqdm import tqdm
 from typing import Optional
 import features as ft      
+import json
+import random
 
 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+
+def readJson(filePath):
+    
+    with open(filePath, 'r') as f:
+        data = json.load(f)
+    return data
+
+
+def writeJson(data, filePath):
+    with open(filePath, 'w') as f:
+        json.dump(data, f, indent=2)
 
 
 class DataGraph(Dataset):
@@ -66,6 +80,128 @@ class DataGraph(Dataset):
         
         return data, idx
     
+
+
+
+class DataLoader2(Dataset):
+    """ 
+    Pytorch geometric dataloader
+    """
+
+    def __init__(self, 
+                 root: str, 
+                 transform:Optional[None]=None, 
+                 pre_transform:Optional[None]=None, 
+                 pre_filter:Optional[None]=None, 
+                 path:str = None, 
+                 jsonFile:str = None,
+                 mode = 'training'):
+        """
+        Initialisation of the pytorch geometric dataset
+
+        This dataset contains the one-step transitions used during the training
+
+        Args:
+        -----
+            - `root` (str): path of the root where data is put when
+            - `transform`
+            - `pre_transform`
+            - `pre_filter`
+            - `path`: path to use in order to form the different sets
+        """
+        super(DataLoader2, self).__init__(root, transform, pre_transform, pre_filter)
+
+        self.mode = mode
+        
+        if not os.path.exists(jsonFile):
+            self.path = path
+            
+            learningPath = os.path.join(path, 'training/torch_file')
+            validationPath = os.path.join(path, 'validation/torch_file')
+            testPath = os.path.join(path, 'test/torch_file')
+            
+            self.trainingList = []
+            self.validationList = []
+            self.testList = []
+            
+            for root, dirs, files in os.walk(learningPath):
+                for file in files:
+                    self.trainingList.append(os.path.join(learningPath,file))
+                    
+            for root, dirs, files in os.walk(validationPath):
+                for file in files:
+                    self.validationList.append(os.path.join(validationPath,file))
+                    
+            for root, dirs, files in os.walk(testPath):
+                for file in files:
+                    self.testList.append(os.path.join(testPath,file))
+
+
+
+            random.shuffle(self.trainingList)
+            random.shuffle(self.validationList)
+            random.shuffle(self.testList)
+
+
+
+            d = {}
+            d['training'] = self.trainingList
+            d['validation'] = self.validationList
+            d['test'] = self.testList
+
+            writeJson(d, jsonFile)
+            
+            print(f"Created json !!!")
+            print(len(self.trainingList))
+            print(len(self.validationList))
+            print(len(self.testList))
+
+
+        else:
+            jsonFile = readJson(jsonFile)
+            self.trainingList = jsonFile['training']
+            self.validationList = jsonFile['validation']
+            self.testList = jsonFile['test']
+
+
+        if self.mode == 'training':
+            self.pathList =  self.trainingList
+        
+        if self.mode == 'validation':
+            self.pathList = self.validationList
+        
+        if self.mode == 'test':
+            self.pathList = self.testList
+
+    @property
+    def raw_file_names(self):
+        return None
+
+    @property
+    def processed_file_names(self):
+        return None
+
+    def _download(self):
+        pass
+    
+
+    def _process(self, pathlist):
+        pass
+                    
+    def len(self):
+        if self.mode == 'training':
+            return len(self.trainingList)
+        
+        if self.mode == 'validation':
+            return len(self.validationList)
+        
+        if self.mode == 'test':
+            return len(self.testList)
+
+    def get(self, idx):
+        data = torch.load(self.pathList[idx])
+        
+        return data, idx
 
 
 class simLoader(torchDataset):
@@ -165,15 +301,10 @@ class simLoader2(torchDataset):
 
         for root, dirs, files in tqdm(os.walk(path)):
             for file in files:
-                
-                if file.startswith("output"):
-                    
-                    
-                    #resOutput = np.load(file)
-                    a = np.load(os.path.join(path, file), allow_pickle=True)
-                    resOutput = a.item()['resOutput']
-                    
-                    self.mats.append(resOutput)
+
+                resOutput = torch.from_numpy(np.load(os.path.join(path, file)))
+
+                self.mats.append(resOutput)
              
         self.length = len(self.mats)
     
