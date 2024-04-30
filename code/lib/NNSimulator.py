@@ -5,8 +5,7 @@ import os
 from tqdm import tqdm
 from torch_geometric.data import Data
 from norm import normalizeCol
-from features import optimized_getGraph
-from tools import create_simulation_video_cv2_norm
+from features import optimized_getGraph, getFeatures
 
 PATH = os.path.dirname(os.path.abspath(__file__))
 
@@ -27,13 +26,18 @@ MIN_Y = cfg['normalization']['position']['minPos']
 MAX_Y = cfg['normalization']['position']['maxPos']
 
 
+R_PARAM = cfg['simulation']['parameters']['R']
+MIN_RAD = cfg['normalization']['radius']['minRad']
+MAX_RAD = cfg['normalization']['radius']['maxRad']
+
+MIN_DELTA = -8
+MAX_DELTA = 8
+
+
 NB_HIST = cfg['feature']['nbHist']
 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-
-def distance(v1, v2):
-    return np.linalg.norm(v1-v2)
 
 ###############
 # Simulator
@@ -44,8 +48,8 @@ class NNSimulator():
         self.model = model
 
 
-    def runSim(self, T, state, debug = None):
-        return genSim(self.model, T, state, train = False, debug = debug)
+    def runSim(self, T, state, pos, debug = None):
+        return genSim(self.model, T, state, pos, train = False, debug = debug)
         
         
 def genSim(model, T, state, pos, train = True, debug = None):
@@ -75,29 +79,28 @@ def genSim(model, T, state, pos, train = True, debug = None):
         yList = []  # list of speeds
 
         for i in range(T):
+            
             # one-step transition
 
             if debug is not None:
                 y = debug[i]
             else:
                 y = model(state)
-            yList.append(y)
 
             # update of the states and positions
             #with torch.no_grad():  # ?
 
             if OUTPUT_TYPE == 'speed':
                 # Effect of boundary conditioned by previous position
-                y = boundaryEffect(hist[-1][0], y, BOUNDARY )
-                state, position = updateData(state, hist[-1][0], y)
-
-
+                vNext = boundaryEffect(hist[-1][0], y, BOUNDARY )
+                
             elif OUTPUT_TYPE == 'acceleration':
                 v = state.x[:, :2]
                 vNext = v + y
                 vNext = boundaryEffect(hist[-1][0], vNext, BOUNDARY)
-                state, position = updateData(state, hist[-1][0], vNext)
 
+            yList.append(vNext)
+            state, position = updateData(state, hist[-1][0], vNext)
             hist.append(torch.unsqueeze(position, dim = 0))
 
         return torch.cat(hist, dim = 0), torch.cat(yList, dim = -1)       # [T, N, 2], [T, N, 2]
@@ -118,19 +121,16 @@ def genSim(model, T, state, pos, train = True, debug = None):
 
                 if OUTPUT_TYPE == 'speed':
                     # Effect of boundary conditioned by previous position
-                    y = boundaryEffect(hist[-1][0], y, BOUNDARY )
-                    state, position = updateData(state, hist[-1][0], y)
+                    vNext = boundaryEffect(hist[-1][0], y, BOUNDARY )
 
                 elif OUTPUT_TYPE == 'acceleration':
                     v = state.x[:, :2]
                     vNext = v + y
                     vNext = boundaryEffect(hist[-1][0], vNext, BOUNDARY )               
-                    state, position = updateData(state, hist[-1][0], vNext)
 
-
+                state, position = updateData(state, hist[-1][0], vNext)
                 hist.append(torch.unsqueeze(position, dim = 0))
 
-        model.train()
         return torch.cat(hist, dim = 0)
 
 
@@ -184,63 +184,18 @@ def updateState(prevState, prevPos, speed):
     return s, nextPos
 
 
-def getGraph(mat_t, threshold = THRESHOLD_DIST):
-    """ 
-    Function to compute the graph for pytorch geometric
-
-    Args:
-    -----
-        - `mat_t` (np.array): 2D np array (mat at a given timestep)
-        - `threshold` (float): 
-
-    Returns:
-    --------
-        the list of indices and of distances for the graph
-    """
-
-    distList = []
-    indices = []
-
-    for i in range(mat_t.shape[0]):
-        for j in range(i+1, mat_t.shape[0]):
-
-            # compute the distance between cell at given timestep
-            dist = distance(mat_t[i, :], mat_t[j, :])
-            
-            
-            if dist < threshold:
-                
-                indices += [[i, j], [j, i]]
-
-                direction_vector = mat_t[j, :] - mat_t[i, :]
-                angle = np.arctan2(direction_vector[1], direction_vector[0])
-                cos_theta = np.cos(angle)
-                sin_theta = np.sin(angle)
-
-                
-                dist = normalizeCol(dist, MIN_DIST, MAX_DIST)
-                
-                distList.append(torch.tensor([dist, cos_theta, sin_theta], dtype=torch.float).unsqueeze(0))
-                distList.append(torch.tensor([dist, -cos_theta, -sin_theta], dtype=torch.float).unsqueeze(0))
-
-
-    indices = torch.tensor(indices)
-    indices = indices.t().to(torch.long).view(2, -1)
-    distList = torch.cat(distList, dim = 0)
-
-    return distList, indices
-
-
 def updateData(prevState, prevPose, speed, device = DEVICE, threshold = THRESHOLD_DIST):
 
     newS, nextPose = updateState(prevState.x,prevPose, speed)
 
     newGraph, newInds = optimized_getGraph(nextPose.cpu().detach().numpy().copy())
+    
+    newGraph = normalizeCol(newGraph, MIN_DELTA, MAX_DELTA)
 
     return Data(x = newS, edge_index = newInds, edge_attr = newGraph).to(device), nextPose
 
 
-def getSimulationVideo(model:torch.tensor, initPos:torch.tensor, nbTimesteps:int, initState:torch.tensor, outputPath:str) -> torch.tensor:
+def getSimulationVideo(model:torch.tensor, initPos:torch.tensor, nbTimesteps:int, initState:torch.tensor) -> torch.tensor:
     """ 
     Function to create a simulation from the model
 
@@ -261,6 +216,18 @@ def getSimulationVideo(model:torch.tensor, initPos:torch.tensor, nbTimesteps:int
 
     res = simulator.runSim(nbTimesteps, initState, initPos)
 
-    create_simulation_video_cv2(res, outputPath, fps = 10, size = (600,600))
+    #create_simulation_video_cv2(res, outputPath, fps = 10, size = (600,600))
 
+    return res
+
+
+
+def getSimulationData(model:torch.tensor, nbTimesteps:int, d:np.array, i = 5, display =True) -> torch.tensor:
+    x, y = getFeatures(d.copy(), np.array([R_PARAM]), nb = 4)
+    attr, inds = optimized_getGraph(d[5, :, :].copy())
+    attr = normalizeCol(attr, MIN_DELTA, MAX_DELTA)
+    s = Data(x = x[4][: , 2:], edge_attr = attr, edge_index = inds).to(DEVICE)
+
+    res = getSimulationVideo(model, torch.from_numpy(d[5, :, :].copy()).float(), nbTimesteps, s)
+    
     return res

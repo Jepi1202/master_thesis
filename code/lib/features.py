@@ -2,7 +2,7 @@ import numpy as np
 import os
 import yaml
 import torch
-from norm import normalizeCol
+#from norm import normalizeCol
 
 # delete last elements because can't predict for it
 # can't keep the NB_ROLLOUT elements because can't do it entirely for them
@@ -244,8 +244,6 @@ def getEdges2(mat:np.array,threshold:float = THRESHOLD_DIST)->tuple:
                 
                 
                 if dist < threshold:
-                    #adj[i,j] = 1
-                    #adj [j, i] = 1
                     
                     indices += [[i, j], [j, i]]
 
@@ -326,10 +324,6 @@ def optimized_getGraph(mat_t, threshold=THRESHOLD_DIST):
 
     # Calculate direction vectors and angles
     direction_vectors = mat_t[filtered_iy] - mat_t[filtered_ix]
-    angles = np.arctan2(direction_vectors[:, 1], direction_vectors[:, 0])
-
-    cos_theta = np.cos(angles)
-    sin_theta = np.sin(angles)
 
     # Normalize distances and create distance vectors
     #normalized_dists = normalizeCol(distances, MIN_DIST, MAX_DIST)

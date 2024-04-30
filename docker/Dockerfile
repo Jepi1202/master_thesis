@@ -20,6 +20,7 @@ RUN pip install numpy
 RUN pip install matplotlib
 RUN pip install jupyter
 RUN pip install opencv-python
+RUN pip install wandb
 
 EXPOSE 8888
 

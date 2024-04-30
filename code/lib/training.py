@@ -30,6 +30,10 @@ R_PARAM = 0.1
 MIN_RAD = cfg['normalization']['radius']['minRad']
 MAX_RAD = cfg['normalization']['radius']['maxRad']
 
+MIN_DELTA = -8
+MAX_DELTA = 8
+
+
 print('loading training')
 
 PATH_MODEL = '/home/jpierre/v2/models'
@@ -288,6 +292,7 @@ def evaluate(model, params:paramsLearning, device = DEVICE):
 
             for d, _ in loaderTorch:
                 d = d.to(device)
+                d.edge_attr = normalizeCol(d.edge_attr, MIN_DELTA, MAX_DELTA)
                 res = model(d)  
                 
                 evalLoss += torch.nn.functional.l1_loss(res.reshape(-1), d.y[:, :2].reshape(-1))
@@ -313,7 +318,8 @@ def evaluate(model, params:paramsLearning, device = DEVICE):
                 d = torch.squeeze(d, dim = 0).numpy()
                 
                 # would be great a function where input simulation and output the predicted stuff
-                x, y = ft.getFeatures(d.copy(), np.array([normalizeCol(R_PARAM, MIN_RAD, MAX_RAD)]), nb = 4)
+                #x, y = ft.getFeatures(d.copy(), np.array([normalizeCol(R_PARAM, MIN_RAD, MAX_RAD)]), nb = 4)
+                x, y = ft.getFeatures(d.copy(), np.array([R_PARAM]), nb = 4)
                 attr, inds = ft.optimized_getGraph(d[5, :, :].copy())
                 s = Data(x = x[4], edge_attr = attr, edge_index = inds).to(DEVICE)
                 res = genSim(model, 80, s, torch.from_numpy(d[5, :, :].copy()).float(), train = False)
@@ -352,6 +358,7 @@ def train_1step(model, params:paramsLearning, device = DEVICE, debug:bool = True
             #bina = bina.repeat(2, 1).swapaxes(0,1).to(device)
 
             data = data.to(device)
+            data.edge_attr = normalizeCol(data.edge_attr, MIN_DELTA, MAX_DELTA)
             pos = data.x[:, :2].clone()
 
             # limitDist ===  boundary now ...
@@ -442,6 +449,7 @@ def train_roll(model, params:paramsLearning, device = DEVICE, debug:bool = True)
             nb_rolling = np.random.randint(1, nbRoll+1)
             
             data = data.to(DEVICE)
+            data.edge_attr = normalizeCol(data.edge_attr, MIN_DELTA, MAX_DELTA)
 
             pos  = data.x[:, :2].clone()
             data.x = data.X[:, 2:]
@@ -456,7 +464,7 @@ def train_roll(model, params:paramsLearning, device = DEVICE, debug:bool = True)
                 out = model(data)
 
             
-            loss0 = scaleLoss * lossFun(out, y[:, :2], bina, topk = topk)
+            loss0 = scaleLoss * lossFun(out, y[:, :nb_rolling], bina, topk = topk)
             loss1 = scaleL1 * model.L1Reg(data)
             loss = loss0 + loss1
 

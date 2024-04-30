@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import matplotlib.animation as animation
 
-def find_neighbours(positions, cutoff = 2, debug=False):
+def find_neighbours(positions, cutoff = 6, debug=False):
     """
     get all the cells that are in a given threshold as neighbors
     """
