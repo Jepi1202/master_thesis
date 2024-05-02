@@ -19,3 +19,12 @@ def normalizeCol(vect: np.array, minVal:float, maxVal:float)->np.array:
     
     ran = maxVal - minVal
     return (vect - minVal)/ran
+
+
+
+def normalizeGraph(graph):
+    # do not change the features of the nodes
+    # since use cos and sin, no real need for normalization
+    #: might still be useful for the distance in the edges though
+
+    return graph

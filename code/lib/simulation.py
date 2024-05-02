@@ -44,22 +44,23 @@ def calculate_interaction(N, ri, rj, k, epsilon, radii = 1.0):
     return force
 
 
-def boundary_effects(ri, fi, boundary, strength = 1):
+def boundary_effects(ri, fi, boundary, cosAndSin, strength = 1):
     """
     change the direction if outside of the box
     """
 
     x, y = ri
     fx, fy = fi
-    reverse_angle = 0
     if x > boundary or x < -boundary:
         fx = -strength*fx
-        reverse_angle = 1
+        cosAndSin[0] = cosAndSin[0] * -1
     if y > boundary or y < -boundary:
         fy = -strength*fy
-        reverse_angle = 1
+        cosAndSin[1] = cosAndSin[1] * -1
 
-    return np.array([fx, fy]), reverse_angle
+
+
+    return np.array([fx, fy]), cosAndSin
 
 
 def animate(output, interactions, boundary):
@@ -125,6 +126,12 @@ def compute_main(N, params, boundary, T = 100, dt = 0.01, seed = 20, cutoff = 6,
 
         positions = initPos.copy()
 
+
+    # get the cos and sin from the angles
+    cosines = np.cos(angles).reshape(-1, 1)
+    sines = np.sin(angles).reshape(-1, 1)
+    cosAndSin = np.concatenate((cosines, sines), axis=-1)
+
     output = np.zeros((T, N, 2))
     interactions = np.zeros((T, N))
     output[0] = positions
@@ -154,11 +161,12 @@ def compute_main(N, params, boundary, T = 100, dt = 0.01, seed = 20, cutoff = 6,
             total_force = active_force + interaction_force
 
             # Apply boundary effects
-            corrected_force, reverse_angle = boundary_effects(positions[i], total_force, boundary=boundary)
+            nextPos =  positions[i] + dt * total_force
+            corrected_force, cosAndSin[i, :] = boundary_effects(nextPos, total_force, cosAndSin=cosAndSin[i, :], boundary=boundary)
 
             # Update positions
             positions[i] += dt * corrected_force
-            angles[i] += reverse_angle*np.pi
+            angles[i] = np.arctan2(cosAndSin[i, 1], cosAndSin[i, 0])
 
         # Update noise term in angles
         if noiseBool:

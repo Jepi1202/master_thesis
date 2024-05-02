@@ -11,8 +11,8 @@ from tqdm import tqdm
 
 from torch.optim.lr_scheduler import StepLR
 import features as ft
-from norm import normalizeCol
-from NNSimulator import genSim
+from norm import normalizeGraph
+from NNSimulator import genSim, getSimulationData
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from dataLoading import DataGraph
@@ -29,6 +29,7 @@ EDGE_SHAPE = 3
 R_PARAM = 0.1
 MIN_RAD = cfg['normalization']['radius']['minRad']
 MAX_RAD = cfg['normalization']['radius']['maxRad']
+BOUNDARY = cfg['simulation']['parameters']['boundary']
 
 MIN_DELTA = -8
 MAX_DELTA = 8
@@ -208,16 +209,22 @@ def dataAugFun(data, params:paramsLearning, device = DEVICE):
     """
 
     pCutoff = params.probDataAug
-    stdSpeed = params.stdSpeed
-    stdDeltaPos = params.stdDeltaPos
+    #stdSpeed = params.stdSpeed
+    #stdDeltaPos = params.stdDeltaPos
+    stdSpeed = 0.02
+    stdDeltaPos = 0.05
+    stdCos = 0.01
         
     p2 = np.random.uniform(0, 1)
     if p2 < pCutoff:   #noise
         rdNb = torch.normal(mean=0, std=stdSpeed, size=data.x.shape).to(device)
-        rdNb2 = torch.normal(mean=0, std=stdDeltaPos, size=data.edge_attr.shape).to(device)
+        rdNb2 = torch.normal(mean=0, std=stdDeltaPos, size=data.edge_attr.shape[0]).to(device)
+        rdNb3 = torch.normal(mean=0, std=stdDeltaPos, size=(data.edge_attr.shape[0], 2)).to(device)
 
         data.x += rdNb
-        data.edge_attr += rdNb2
+        data.edge_attr[:, 0] += rdNb2
+        data.edge_attr[:, 1:3] += rdNb3
+
 
     return data
 
@@ -292,10 +299,14 @@ def evaluate(model, params:paramsLearning, device = DEVICE):
 
             for d, _ in loaderTorch:
                 d = d.to(device)
-                d.edge_attr = normalizeCol(d.edge_attr, MIN_DELTA, MAX_DELTA)
+                d.x = d.x[:, 2:]
+                d = normalizeGraph(d)
                 res = model(d)  
                 
-                evalLoss += torch.nn.functional.l1_loss(res.reshape(-1), d.y[:, :2].reshape(-1))
+                d.y = torch.swapaxes(d.y, 0, 1)
+                
+
+                evalLoss += torch.nn.functional.l1_loss(res.reshape(-1), d.y[0, :, :].reshape(-1))
                 
                 break
                 
@@ -316,15 +327,11 @@ def evaluate(model, params:paramsLearning, device = DEVICE):
             for d, _ in loaderSim:
                         
                 d = torch.squeeze(d, dim = 0).numpy()
-                
-                # would be great a function where input simulation and output the predicted stuff
-                #x, y = ft.getFeatures(d.copy(), np.array([normalizeCol(R_PARAM, MIN_RAD, MAX_RAD)]), nb = 4)
-                x, y = ft.getFeatures(d.copy(), np.array([R_PARAM]), nb = 4)
-                attr, inds = ft.optimized_getGraph(d[5, :, :].copy())
-                s = Data(x = x[4], edge_attr = attr, edge_index = inds).to(DEVICE)
-                res = genSim(model, 80, s, torch.from_numpy(d[5, :, :].copy()).float(), train = False)
+                start = 8       # not 0
+                res = getSimulationData(model, 80, d, i = start)
+                L = res.shape[0]
                                 
-                evalLossSim += torch.nn.functional.l1_loss(res.reshape(-1), torch.from_numpy(d[5:86, :, :].copy()).reshape(-1).to(DEVICE))
+                evalLossSim += torch.nn.functional.l1_loss(res.reshape(-1), torch.from_numpy(d[start:(start + L), :, :].copy()).reshape(-1).to(DEVICE))
 
 
         # other representation methods here ...
@@ -358,8 +365,7 @@ def train_1step(model, params:paramsLearning, device = DEVICE, debug:bool = True
             #bina = bina.repeat(2, 1).swapaxes(0,1).to(device)
 
             data = data.to(device)
-            data.edge_attr = normalizeCol(data.edge_attr, MIN_DELTA, MAX_DELTA)
-            pos = data.x[:, :2].clone()
+            pos = data.x[:, :2]
 
             # limitDist ===  boundary now ...
             #bina = (torch.abs(pos[:, 0]) <= 120) & (torch.abs(pos[:, 1]) <= 120)
@@ -368,16 +374,23 @@ def train_1step(model, params:paramsLearning, device = DEVICE, debug:bool = True
             data.x = data.x[:, 2:]
 
             bina = None
-
             
             y = data.y
 
             data = dataAugFun(data, params = params)
+            data = normalizeGraph(data)
 
             out = model(data)
+            
+            nextPose = pos + out
+            
+            out[:, 0] = torch.where((nextPose[:, 0] < -BOUNDARY) | (nextPose[:, 0] > BOUNDARY), -out[:, 0], out[:, 0])
+            out[:, 1] = torch.where((nextPose[:, 1] < -BOUNDARY) | (nextPose[:, 1] > BOUNDARY), -out[:, 1], out[:, 1])
+            
+            y = torch.swapaxes(y, 0, 1) 
 
 
-            loss0 = scaleLoss * lossFun(out, y[:, :2], bina, topk = topk)
+            loss0 = scaleLoss * lossFun(out.reshape(-1), y[0, :, :].reshape(-1), bina, topk = topk)
             loss1 = scaleL1 * model.L1Reg(data)
             loss = loss0 + loss1
 
@@ -437,7 +450,6 @@ def train_roll(model, params:paramsLearning, device = DEVICE, debug:bool = True)
 
     model.train()
     i = 0
-    j = 0
     cumLoss = 0
 
     for epoch in range(nbEpoch):
@@ -448,30 +460,39 @@ def train_roll(model, params:paramsLearning, device = DEVICE, debug:bool = True)
 
             nb_rolling = np.random.randint(1, nbRoll+1)
             
-            data = data.to(DEVICE)
-            data.edge_attr = normalizeCol(data.edge_attr, MIN_DELTA, MAX_DELTA)
+            data = data.to(DEVICE)            
 
-            pos  = data.x[:, :2].clone()
-            data.x = data.X[:, 2:]
+            pos  = data.x[:, :2]
+            data.x = data.x[:, 2:]
             y = data.y
+            
+            #print(y.shape)
+
 
             bina = None
 
+            data = dataAugFun(data, params = params)
+            data = normalizeGraph(data)
 
             if nb_rolling > 1:                 
                 _, out = genSim(model, nb_rolling, data, pos, train = True)
+                
+                #print(out.shape)
             else:
                 out = model(data)
-
+                
+                
+            y = torch.swapaxes(y, 0, 1)   
             
-            loss0 = scaleLoss * lossFun(out, y[:, :nb_rolling], bina, topk = topk)
+
+            loss0 = scaleLoss * lossFun(out.reshape(-1), y[:nb_rolling, :, :].reshape(-1), bina, topk = topk)
             loss1 = scaleL1 * model.L1Reg(data)
             loss = loss0 + loss1
 
             cumLoss += loss
 
 
-            if (j+1)%batchRollout == 0:
+            if (i+1)%batchRollout == 0:
                 cumLoss.backward()
                 optimizer.step()
 
@@ -492,7 +513,7 @@ def train_roll(model, params:paramsLearning, device = DEVICE, debug:bool = True)
                     
 
 
-            if ((i+1) % 500 == 0 or i == 0):
+            if ((i+1) % 10000 == 0 or i == 0):
                 model.eval()
                 with torch.no_grad():
                     evalLoss, evalLossSim = evaluate(model, params, device = device)

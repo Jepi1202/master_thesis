@@ -7,8 +7,6 @@ from tqdm import tqdm
 import os
 import features as ft
 import simulation as sim
-from norm import normalizeCol
-
 
 PATH = os.path.dirname(os.path.abspath(__file__))
 
@@ -52,8 +50,7 @@ NB_HIST = cfg['feature']['nbHist']
 
 #############################################################
 
-SCRATCH = '/master/data'
-print(os.path.exists(SCRATCH))
+SCRATCH = '/scratch/users/jpierre/pikachu'
 #p = '/home/jpierre/v2/part_1_b'
 p = SCRATCH
 print(f'Deposing files in depository >>>> {p}')
@@ -95,7 +92,7 @@ class SimulationParameters():
         self.p = (self.v0, self.tau, self.k, self.epsilon)
         
     def _getParams(self)->np.array:
-        paramList = np.array([normalizeCol(self.radii, MIN_RAD, MAX_RAD)])
+        paramList = np.array([self.radii])
         return paramList
     
     def _loadParams(self, vect, force:bool = False)->None:
@@ -309,16 +306,17 @@ def runSim(pathTorch:str, pathSim:str, params:SimulationParameters, cond:tuple, 
     p = params._getSimParams()
 
     # run the simulation
+
     resOutput, resInter = sim.compute_main(*p, initialization = cond)  
-    paramList = params._getParams()
+    #paramList = params._getParams()
 
     # save simulation
     #np.save(os.path.join(pathSim, f'output_{simNb}'), resOutput)
     np.save(pathSim, resOutput)
 
     # create the features of the simulation
-    nodesFeatures, yVect = ft.getFeatures(resOutput, paramList, nbHist)
-    edgeIndexVect, edgeFeaturesVect = ft.getEdges(resOutput, params.cutoff)
+    #nodesFeatures, yVect = ft.getFeatures(resOutput, paramList, nbHist)
+    nodesFeatures, yVect, edgeFeaturesVect, edgeIndexVect = ft.processSimulation(resOutput, nbhist = nbHist)
 
     # save the pt files
     if saveBool:

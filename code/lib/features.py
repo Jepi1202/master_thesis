@@ -2,8 +2,8 @@ import numpy as np
 import os
 import yaml
 import torch
-#from norm import normalizeCol
 
+print("yessss")
 # delete last elements because can't predict for it
 # can't keep the NB_ROLLOUT elements because can't do it entirely for them
 # delete first element because can't know the v_{0-1}
@@ -13,25 +13,14 @@ PATH = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(PATH, 'cfg.yml'), 'r') as file:
     cfg = yaml.safe_load(file) 
     
-nomalization = cfg['normalization']
 features = cfg['feature']
-
 
 NB_HIST = features['nbHist']  # number of repetitions fo lagged values
 THRESHOLD_DIST = features['distGraph']
 NUMBER_ROLLOUT = features['nbRolloutOut']
 FEATURE_SHAPE = features['inShape']
 EDGE_SHAPE = features['edgeShape']
-
-
-# noramlize distances
-MIN_DIST = nomalization['distance']['minDistance']
-MAX_DIST = nomalization['distance']['maxDistance']
-
-MIN_X = nomalization['position']['minPos']
-MAX_X = nomalization['position']['maxPos']
-MIN_Y = nomalization['position']['minPos']
-MAX_Y = nomalization['position']['maxPos']
+R_PARAM = cfg['simulation']['parameters']['R']
 
 
 ###############
@@ -57,14 +46,13 @@ def predictSpeeds(mat:np.array)->list:
     
     # element i ==> speed i->i+1
     for i in range(1, time - NUMBER_ROLLOUT):
-        v = None
+        v = torch.zeros((NUMBER_ROLLOUT, mat.shape[1], 2))
         for t in range(NUMBER_ROLLOUT):
             nb = i + t
             
-            if v is None:
-                v = torch.from_numpy(speeds[nb, :, :])
-            else:
-                v = torch.cat((v,torch.from_numpy(speeds[nb, :, :])), dim = -1)
+            v[t, :, :] = torch.from_numpy(speeds[nb, :, :])
+            
+        v = torch.swapaxes(v, 0, 1)
         
         y.append(v)
         
@@ -159,7 +147,7 @@ def addParams(mat:np.array, params:np.array)-> np.array:
     return res
 
 
-def getFeatures(mat: np.array, params:np.array, nb:int = NB_HIST)->tuple:
+def getFeatures(mat: np.array, nb:int = NB_HIST)->tuple:
     """ 
     Function that allows to compute the features of the nodes 
     and the structure of the graph
@@ -167,7 +155,6 @@ def getFeatures(mat: np.array, params:np.array, nb:int = NB_HIST)->tuple:
     Args:
     -----
         - `mat`[Time x #Nodes x 2]: positions of the different cells through time
-        - `params`: additional features (already normalized)
         - `nb`: number of past timesteps concatenated in the macrostate of the cells
     
     Output:
@@ -191,7 +178,7 @@ def getFeatures(mat: np.array, params:np.array, nb:int = NB_HIST)->tuple:
     x = getSpeedFeatures(mat, nb)
     
     # add the parameters
-    x = addParams(x, params)    
+    #x = addParams(x, params)    
 
     vectnodes = []
 
@@ -210,7 +197,7 @@ def distance(v1, v2):
     return np.linalg.norm(v1-v2)
 
 
-def getEdges2(mat:np.array,threshold:float = THRESHOLD_DIST)->tuple:
+def getEdges2(mat:np.array, radius,threshold:float = THRESHOLD_DIST)->tuple:
     """
     Function to get the edges and the labels for a graph
     It will select the closest neighbors to a given nodes as 
@@ -247,12 +234,10 @@ def getEdges2(mat:np.array,threshold:float = THRESHOLD_DIST)->tuple:
                     
                     indices += [[i, j], [j, i]]
 
-                    direction_vector = mat[t, j, :] - mat[t, i, :]
-                    
-                    #dist = normalizeCol(dist.copy(), MIN_DIST, MAX_DIST)
-                                                            
-                    distList.append(torch.tensor([dist, direction_vector[0], direction_vector[1]], dtype=torch.float).unsqueeze(0))
-                    distList.append(torch.tensor([dist, direction_vector[1], direction_vector[0]], dtype=torch.float).unsqueeze(0))
+                    direction_vector = (mat[t, j, :] - mat[t, i, :])/dist
+                                                                                
+                    distList.append(torch.tensor([dist, direction_vector[0], direction_vector[1], radius[i], radius[j]], dtype=torch.float).unsqueeze(0))
+                    distList.append(torch.tensor([dist, -direction_vector[0], -direction_vector[1], radius[j], radius[i]], dtype=torch.float).unsqueeze(0))
         
         indices = torch.tensor(indices)
         indices = indices.t().to(torch.long).view(2, -1)
@@ -263,7 +248,7 @@ def getEdges2(mat:np.array,threshold:float = THRESHOLD_DIST)->tuple:
     return resInd, resD
 
 
-def getEdges(mat:np.array,threshold:float = THRESHOLD_DIST)->tuple:
+def getEdges(mat:np.array, radius, threshold:float = THRESHOLD_DIST)->tuple:
     """
     Function to get the edges and the labels for a graph
     It will select the closest neighbors to a given nodes as 
@@ -288,14 +273,44 @@ def getEdges(mat:np.array,threshold:float = THRESHOLD_DIST)->tuple:
     
     for t in range(1, mat.shape[0] - NUMBER_ROLLOUT):
 
-        vd, iInd = optimized_getGraph(mat[t, :, :], threshold=THRESHOLD_DIST)
+        vd, iInd = optimized_getGraph(mat[t, :, :], radius, threshold=THRESHOLD_DIST)
         
         resD.append(vd)
         resInd.append(iInd)
     return resInd, resD
 
 
-def optimized_getGraph(mat_t, threshold=THRESHOLD_DIST):
+
+def getGraph1(mat_t, radius, threshold=THRESHOLD_DIST):
+    distList = []
+    indices = []
+
+    for i in range(mat_t.shape[0]):
+        for j in range(i+1, mat_t.shape[0]):
+
+            # compute the distance between cell at given timestep
+            dist = distance(mat_t[i, :], mat_t[j, :])
+            
+            
+            if dist < threshold:
+                
+                indices += [[i, j], [j, i]]
+
+                direction_vector = (mat_t[j, :] - mat_t[i, :])/dist
+                                                                            
+                distList.append(torch.tensor([dist, direction_vector[0], direction_vector[1], radius[i], radius[j]], dtype=torch.float).unsqueeze(0))
+                distList.append(torch.tensor([dist, -direction_vector[0], -direction_vector[1], radius[j], radius[i]], dtype=torch.float).unsqueeze(0))
+    
+    indices = torch.tensor(indices)
+    indices = indices.t().to(torch.long)
+    distList = torch.cat(distList, dim = 0)
+
+
+    return indices, distList
+
+
+
+def optimized_getGraph(mat_t, radius, threshold=THRESHOLD_DIST):
     """
     Optimized function to compute the graph for PyTorch Geometric.
 
@@ -323,17 +338,20 @@ def optimized_getGraph(mat_t, threshold=THRESHOLD_DIST):
     distances = all_dists[filtered_ix, filtered_iy]
 
     # Calculate direction vectors and angles
-    direction_vectors = mat_t[filtered_iy] - mat_t[filtered_ix]
+    direction_vectors = (mat_t[filtered_iy] - mat_t[filtered_ix]) / distances[:, None] 
+
+    radii_i = radius[filtered_ix]
+    radii_j = radius[filtered_iy]
+
 
     # Normalize distances and create distance vectors
-    #normalized_dists = normalizeCol(distances, MIN_DIST, MAX_DIST)
 
     # Double entries for bidirectional edges
     doubled_indices = np.vstack([np.stack([filtered_ix, filtered_iy], axis=1),
                                  np.stack([filtered_iy, filtered_ix], axis=1)])
     
-    doubled_dist_vectors = np.vstack([np.stack([distances, direction_vectors[:, 0], direction_vectors[:, 1]], axis=1),
-                                      np.stack([distances, direction_vectors[:, 1], direction_vectors[:, 0]], axis=1)])
+    doubled_dist_vectors = np.vstack([np.stack([distances, direction_vectors[:, 0], direction_vectors[:, 1], radii_i, radii_j], axis=1),
+                                      np.stack([distances, -direction_vectors[:, 0], -direction_vectors[:, 1], radii_j, radii_i], axis=1)])
 
     # Convert to tensors
     indices_tensor = torch.tensor(doubled_indices.T, dtype=torch.long)
@@ -342,4 +360,13 @@ def optimized_getGraph(mat_t, threshold=THRESHOLD_DIST):
     return dist_tensor, indices_tensor
 
 
-# new getGraph for NNSimulator
+def processSimulation(sim, radius = None, nbhist = NB_HIST):
+    
+    if radius is None:
+        radius = np.ones(sim.shape[1]) * R_PARAM
+    
+    x,y = getFeatures(sim.copy(), nb=nbhist)
+    resInd, resD = getEdges(sim.copy(), radius)
+
+
+    return x, y, resD, resInd

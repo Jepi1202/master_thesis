@@ -194,25 +194,3 @@ def mmd_rbf(X, Y, gamma=1.0):
 ##########################################
 # Display functions
 ##########################################
-
-
-##########################################
-# Simulator functions
-##########################################
-
-
-class simulNet():
-    def __init__(self, network):
-        self.net = network
-
-
-
-    def simulate(self, x, t, nbHist):
-
-        prevPos = np.zeros((nbHist, 2))
-        prevPos[-1, 0] = x[0]
-        prevPos[-1, 1] = x[1]
-
-        for i in range(t):
-            theta = 
-    

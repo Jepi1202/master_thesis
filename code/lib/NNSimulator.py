@@ -4,7 +4,7 @@ import yaml
 import os
 from tqdm import tqdm
 from torch_geometric.data import Data
-from norm import normalizeCol
+from norm import normalizeGraph
 from features import optimized_getGraph, getFeatures
 
 PATH = os.path.dirname(os.path.abspath(__file__))
@@ -18,20 +18,7 @@ THRESHOLD_DIST = cfg['feature']['distGraph']
 MIN_DIST = cfg['normalization']['distance']['minDistance']
 MAX_DIST = cfg['normalization']['distance']['maxDistance']
 BOUNDARY = cfg['simulation']['parameters']['boundary']
-
-
-MIN_X = cfg['normalization']['position']['minPos']
-MAX_X = cfg['normalization']['position']['maxPos']
-MIN_Y = cfg['normalization']['position']['minPos']
-MAX_Y = cfg['normalization']['position']['maxPos']
-
-
 R_PARAM = cfg['simulation']['parameters']['R']
-MIN_RAD = cfg['normalization']['radius']['minRad']
-MAX_RAD = cfg['normalization']['radius']['maxRad']
-
-MIN_DELTA = -8
-MAX_DELTA = 8
 
 
 NB_HIST = cfg['feature']['nbHist']
@@ -48,8 +35,8 @@ class NNSimulator():
         self.model = model
 
 
-    def runSim(self, T, state, pos, debug = None):
-        return genSim(self.model, T, state, pos, train = False, debug = debug)
+    def runSim(self, T, state, pos, debug = None, train = False):
+        return genSim(self.model, T, state, pos, train = train, debug = debug)
         
         
 def genSim(model, T, state, pos, train = True, debug = None):
@@ -83,7 +70,7 @@ def genSim(model, T, state, pos, train = True, debug = None):
             # one-step transition
 
             if debug is not None:
-                y = debug[i]
+                y = model(debug[i]).to(DEVICE)
             else:
                 y = model(state)
 
@@ -92,18 +79,20 @@ def genSim(model, T, state, pos, train = True, debug = None):
 
             if OUTPUT_TYPE == 'speed':
                 # Effect of boundary conditioned by previous position
-                vNext = boundaryEffect(hist[-1][0], y, BOUNDARY )
+                nPose = hist[-1][0] + y
+                vNext = boundaryEffect(nPose, y, BOUNDARY )
                 
             elif OUTPUT_TYPE == 'acceleration':
                 v = state.x[:, :2]
                 vNext = v + y
-                vNext = boundaryEffect(hist[-1][0], vNext, BOUNDARY)
+                nPose = hist[-1][0] + vNext
+                vNext = boundaryEffect(nPose, vNext, BOUNDARY)
 
             yList.append(vNext)
             state, position = updateData(state, hist[-1][0], vNext)
             hist.append(torch.unsqueeze(position, dim = 0))
 
-        return torch.cat(hist, dim = 0), torch.cat(yList, dim = -1)       # [T, N, 2], [T, N, 2]
+        return torch.cat(hist, dim = 0), torch.stack(yList)       # [T, N, 2], [T, N, 2]
 
     # if not training, do not keep the comptutation graph
     else:
@@ -114,19 +103,21 @@ def genSim(model, T, state, pos, train = True, debug = None):
 
                 # one-step transition
                 if debug is not None:
-                    y = debug[i]
+                    y = model(debug[i]).to(DEVICE)
                 else:
                     y = model(state)
 
 
                 if OUTPUT_TYPE == 'speed':
                     # Effect of boundary conditioned by previous position
-                    vNext = boundaryEffect(hist[-1][0], y, BOUNDARY )
+                    nPose = hist[-1][0] + y
+                    vNext = boundaryEffect(nPose, y, BOUNDARY )
 
                 elif OUTPUT_TYPE == 'acceleration':
                     v = state.x[:, :2]
                     vNext = v + y
-                    vNext = boundaryEffect(hist[-1][0], vNext, BOUNDARY )               
+                    nPose = hist[-1][0] + vNext
+                    vNext = boundaryEffect(nPose, vNext, BOUNDARY )               
 
                 state, position = updateData(state, hist[-1][0], vNext)
                 hist.append(torch.unsqueeze(position, dim = 0))
@@ -189,13 +180,15 @@ def updateData(prevState, prevPose, speed, device = DEVICE, threshold = THRESHOL
     newS, nextPose = updateState(prevState.x,prevPose, speed)
 
     newGraph, newInds = optimized_getGraph(nextPose.cpu().detach().numpy().copy())
+
+    data = Data(x = newS, edge_index = newInds, edge_attr = newGraph)
     
-    newGraph = normalizeCol(newGraph, MIN_DELTA, MAX_DELTA)
+    data = normalizeGraph(data)
 
-    return Data(x = newS, edge_index = newInds, edge_attr = newGraph).to(device), nextPose
+    return data.to(device), nextPose
 
 
-def getSimulationVideo(model:torch.tensor, initPos:torch.tensor, nbTimesteps:int, initState:torch.tensor) -> torch.tensor:
+def getSimulationVideo(model:torch.tensor, initPos:torch.tensor, nbTimesteps:int, initState:torch.tensor, train = False, debug = None) -> torch.tensor:
     """ 
     Function to create a simulation from the model
 
@@ -214,7 +207,7 @@ def getSimulationVideo(model:torch.tensor, initPos:torch.tensor, nbTimesteps:int
 
     simulator = NNSimulator(model)
 
-    res = simulator.runSim(nbTimesteps, initState, initPos)
+    res = simulator.runSim(nbTimesteps, initState, initPos, train = train, debug = debug)
 
     #create_simulation_video_cv2(res, outputPath, fps = 10, size = (600,600))
 
@@ -222,12 +215,16 @@ def getSimulationVideo(model:torch.tensor, initPos:torch.tensor, nbTimesteps:int
 
 
 
-def getSimulationData(model:torch.tensor, nbTimesteps:int, d:np.array, i = 5, display =True) -> torch.tensor:
-    x, y = getFeatures(d.copy(), np.array([R_PARAM]), nb = 4)
-    attr, inds = optimized_getGraph(d[5, :, :].copy())
-    attr = normalizeCol(attr, MIN_DELTA, MAX_DELTA)
-    s = Data(x = x[4][: , 2:], edge_attr = attr, edge_index = inds).to(DEVICE)
+def getSimulationData(model:torch.tensor, nbTimesteps:int, d:np.array, i = 5, display =True, train = False, debug = None, radius = None) -> torch.tensor:
+    if radius is None:
+        radius = np.ones(d.shape[1]) * R_PARAM
 
-    res = getSimulationVideo(model, torch.from_numpy(d[5, :, :].copy()).float(), nbTimesteps, s)
+    x, y = getFeatures(d.copy(), nb = 4)
+    attr, inds = optimized_getGraph(d[i, :, :].copy())
+    s = Data(x = x[i-1][: , 2:], edge_attr = attr, edge_index = inds)
+
+    s = normalizeGraph(s).to(DEVICE)
+
+    res = getSimulationVideo(model, torch.from_numpy(d[i, :, :].copy()).float(), nbTimesteps, s, train = train, debug = debug)
     
     return res
