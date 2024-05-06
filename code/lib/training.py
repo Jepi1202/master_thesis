@@ -295,7 +295,6 @@ def evaluate(model, params:paramsLearning, device = DEVICE):
     with torch.no_grad():
 
         if loaderTorch is not None:
-            evalLoss = 0
 
             for d, _ in loaderTorch:
                 d = d.to(device)

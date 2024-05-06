@@ -1,24 +1,12 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
-import yaml
 
-from torch_geometric.utils import degree as deg
 from torch_geometric.nn import MessagePassing
-from torch_geometric.nn import GATv2Conv, GeneralConv
-from torch_geometric.data import Dataset, Data
-import torch.utils.data as torchData
-from torch.utils.data import Dataset as torchDataset
-from torch_geometric.loader import DataLoader
-
-
-from tqdm import tqdm
-import os
-
 
 # import yaml cfg
 
+
+################################################
 
 
 class MLP(nn.Module):
@@ -63,6 +51,8 @@ class MLP(nn.Module):
                 layer.bias.data.fill_(0.)
 
 
+################################################
+
 
 class MLP2(nn.Module):
     """
@@ -101,9 +91,12 @@ class MLP2(nn.Module):
                 layer.bias.data.fill_(0.)
 
 
-
+################################################
 
 class GN(MessagePassing):
+    """
+    Simple GNN 
+    """
     def __init__(self, inputShape:int, messageShape:int, outputShape:int, shapeEdges:int = 7, hiddenShape:int=256, aggr:str='add'):
         super(GN, self).__init__(aggr=aggr)
 
@@ -164,9 +157,13 @@ class GN(MessagePassing):
         xVal = torch.cat([x, aggr_out], dim=-1)
         return self.updateMLP(xVal) 
     
-    
+
+################################################  
     
 class GN2(MessagePassing):
+    """ 
+    Simple GNN but when a node is isolated,
+    """
     def __init__(self, inputShape:int, messageShape:int, outputShape:int, shapeEdges:int = 7, hiddenShape:int=256, aggr:str='add'):
         super(GN2, self).__init__(aggr=aggr)
 
@@ -181,36 +178,17 @@ class GN2(MessagePassing):
         self.updateMLP = MLP(messageShape + inputShape, outputShape)
     
     def forward(self, x:torch.tensor, edge_index:torch.tensor, edge_attr: torch.tensor):
-        """ 
-        Forward of the Graph neural netowk
-        Relies on .forward that will use message, aggregate and update
-        
-        Args:
-        ----- 
-        - `x`: tensor of nodes [# Nodes, inputShape]
-        - `edge_index`: tensor of the edges of the graph
-        
-        Returns:
-        --------
-        Tensor of shape [# Nodes, outputShape] computed according to the GN formula
-        """
-        # nb: no automatic self loop here ...
-        
-        return self.propagate(edge_index, size=(x.size(0), x.size(0)),edge_attr=edge_attr, x=x)
-    
-    
-    def forward(self, x:torch.tensor, edge_index:torch.tensor, edge_attr: torch.tensor):
         # Identify isolated nodes
-        degree = deg(edge_index[0], num_nodes=x.size(0))
-        isolated_nodes_mask = degree == 0
+        #degree = deg(edge_index[0], num_nodes=x.size(0))
+        #isolated_nodes_mask = degree == 0
         
         # Propagate messages
         out = self.propagate(edge_index, size=(x.size(0), x.size(0)), edge_attr=edge_attr, x=x)
         
         # Set aggregated output for isolated nodes to null vector
-        if isolated_nodes_mask.any():
-            null_vector = torch.zeros_like(out[isolated_nodes_mask])
-            out[isolated_nodes_mask] = null_vector
+        #if isolated_nodes_mask.any():
+        #    null_vector = torch.zeros_like(out[isolated_nodes_mask])
+        #    out[isolated_nodes_mask] = null_vector
         
         return out
       
@@ -244,12 +222,16 @@ class GN2(MessagePassing):
         return self.updateMLP(xVal) 
     
     
-    
+################################################    
 
     
-class GN3(MessagePassing):
+class GN_edge(MessagePassing):
+    """ 
+    Message passing neural network in which the message passing
+    only considers the edges features
+    """
     def __init__(self, inputShape:int, messageShape:int, outputShape:int, shapeEdges:int = 7, hiddenShape:int=64, aggr:str='add'):
-        super(GN3, self).__init__(aggr=aggr)
+        super(GN_edge, self).__init__(aggr=aggr)
 
         self.inputShape = inputShape
         self.messageShape = messageShape
@@ -264,16 +246,16 @@ class GN3(MessagePassing):
     
     def forward(self, x:torch.tensor, edge_index:torch.tensor, edge_attr: torch.tensor):
         # Identify isolated nodes
-        degree = deg(edge_index[0], num_nodes=x.size(0))
-        isolated_nodes_mask = degree == 0
+        #degree = deg(edge_index[0], num_nodes=x.size(0))
+        #isolated_nodes_mask = degree == 0
         
         # Propagate messages
         out = self.propagate(edge_index, size=(x.size(0), x.size(0)), edge_attr=edge_attr, x=x)
         
         # Set aggregated output for isolated nodes to null vector
-        if isolated_nodes_mask.any():
-            null_vector = torch.zeros_like(out[isolated_nodes_mask])
-            out[isolated_nodes_mask] = null_vector
+        #if isolated_nodes_mask.any():
+        #    null_vector = torch.zeros_like(out[isolated_nodes_mask])
+        #    out[isolated_nodes_mask] = null_vector
         
         return out
       

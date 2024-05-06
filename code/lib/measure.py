@@ -2,6 +2,161 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
+DEVICE = torch.cuda.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+
+class Param_eval():
+    def __init__(self, path = None, wandbName = None):
+        self.path = path
+        self.wandbName = wandbName
+
+class EvaluationCfg():
+    def __init__(self):
+
+        self.jacobian = None
+
+        self.norm_angleError = None
+
+        self.heatmap = None
+
+        self.L1_vect = None
+
+        self.MSE_rollout = None
+
+        self.degree_error = None
+
+
+
+def evaluateLoad(loader, cfg: EvaluationCfg, device = DEVICE):
+
+    evalLoss = 0
+    nbCall = len(loader)
+
+    res = {}
+
+    distList = []           # list of distances
+    errorList = []          # list of errors
+    degreeList = []         # list of degrees
+    normError = []          # list of norm errors
+    angleError = []         # list of angles errors
+    messages = None
+    
+    for d, _ in loader:
+        d = d.to(device)
+        d.x = d.x[:, 2:]
+        d = normalizeGraph(d)
+        pred = model(d)  
+        
+        d.y = torch.swapaxes(d.y, 0, 1)
+        
+
+        evalLoss += torch.nn.functional.l1_loss(pred.reshape(-1), d.y[0, :, :].reshape(-1))
+
+
+        if cfg.jacobian:
+            pass
+
+
+        if cfg.degree_error:
+            degs = deg(d.edge_index[0, :], num_nodes=d.x.size(0))
+            errorList.extend(errors.cpu().numpy().tolist())
+            degreeList.extend(degs.cpu().numpy().tolist())
+
+
+        if cfg.dist_error:
+            distList.extend(dist.cpu().numpy().tolist()) 
+            if not cfg.degree_error:
+                errorList.extend(errors.cpu().numpy().tolist())
+
+
+        if cfg.norm_angleError:
+            
+            errorAngle, errorNorm = errorsDiv(pred.cpu().numpy(), d.y[0, :, :].cpu().numpy())
+            normError.extend(errorNorm.tolist())
+            angleError.extend(errorAngle.tolist())
+
+
+        if self.L1_vect:
+            m = getStdMessage(mod, s.edge_attr)
+            if messages is None:
+                messages = m
+            else:
+                messages = np.vstack((messages, m))
+
+
+    # saving results
+
+    evalLoss = evalLoss / nbCall
+
+    if cfg.dist_error:
+        distList = np.array(distList)
+        res['distList'] = distList
+    
+    if cfg.dist_error or cfg.degree_error:
+        errorList = np.array(errorList)
+        res['errorList'] = errorList
+
+    if cfg.degree_error:
+        degreeList = np.array(degreeList)
+        res['degreeList'] = degreeList
+
+    if cfg.norm_angleError:
+        normError = np.array(normError)
+        angleError = np.array(angleError)
+        res['angleError'] = angleError
+        res['normError'] = normError
+
+
+    res['evalLoss'] = evalLoss
+
+    return res
+
+
+def evaluateSim(loader, cfg, device = DEVICE):
+    
+    res = {}
+    data_x = None
+    data_y = None
+
+    nbRoll = 80
+    nbCalls = len(loader)
+
+    evalLossSim = 0
+    mse = 0
+
+    for d, _ in loader:
+                    
+        d = torch.squeeze(d, dim = 0).numpy()
+        start = 8       # not 0
+        res = getSimulationData(model, nbRoll, d, i = start)
+
+        if data_x is None:
+            data_x = res.numpy()
+        else:
+            data_x = np.concatenate((data_x, res.numpy()), axis = 0)
+
+        if data_y is None:
+            data_y = d
+        else:
+            data_y = np.concatenate((data_y, d), axis = 0)
+
+
+        L = res.shape[0]
+                        
+        evalLossSim += torch.nn.functional.l1_loss(res.reshape(-1), torch.from_numpy(d[start:(start + L), :, :].copy()).reshape(-1).to(device))
+
+        if cfg.MSE_rollout:
+            mse += MSE_rollout(res.copy(), d)
+
+    res['evalLossSim'] = evalLossSim / nbCalls
+
+    if cfg.MSE_rollout:
+        res['mse_rollout'] = mse / nbCalls
+
+
+    return res
+
+    
 def compute_jacobian(model, inputs) -> torch.Tensor:
     """
     Compute the jacobian matrix with respect to the inputs
@@ -160,8 +315,12 @@ def heatmap(values, positions, grid_size=(50, 50), plot_size=(8, 6), mode = 'max
         if mode == 'mean':
             with np.errstate(divide='ignore', invalid='ignore'):
                 mean_acceleration_grid = np.true_divide(accumulation_grid, count_grid)
-        
-        mean_acceleration_grid[count_grid == 0] = np.nan  # Set cells with no data to NaN
+
+        else:
+            mean_acceleration_grid = accumulation_grid
+
+        if np.any(count_grid == 0):
+            mean_acceleration_grid[count_grid == 0] = np.nan  # Set cells with no data to NaN
 
         # Plotting the heatmap
         plt.figure(figsize=plot_size)
@@ -170,9 +329,6 @@ def heatmap(values, positions, grid_size=(50, 50), plot_size=(8, 6), mode = 'max
         plt.xlabel('X Position')
         plt.ylabel('Y Position')
         plt.title('Heatmap of Error')
-    
-        plt.show()
-
 
 
 
@@ -184,8 +340,74 @@ def MSE_rollout(roll, sim):
     std = np.std(vals, axis=1)
 
     plt.plot(x, y, 'blue')
-    plt.fill_between(x, y-std, y+std)
+    plt.fill_between(x, y-std, y+std, zorder=  2)
     plt.xlabel('Time')
     plt.ylabel('Rollout MSE')
+    plt.grid(zorder = 1)
 
     return x, y
+
+
+
+################################################
+
+
+def errorsDiv(pred, gt):
+    
+    anglePred = np.arctan2(pred[:, 1], pred[:, 0])
+    angleGT = np.arctan2(gt[:, 1], gt[:, 0])
+
+    normPred = np.linalg.norm(pred, axis=-1)
+    normGT = np.linalg.norm(gt, axis=-1)
+
+    errorNorm = np.abs(normPred - normGT)
+    errorAngle = np.abs(anglePred - angleGT)
+
+    return errorAngle, errorNorm
+
+
+
+################################################
+
+
+
+
+DEVICE = torch.cuda.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+import features as ft
+from torch_geometric.data import Data
+from norm import normalizeGraph
+
+def oneStepSimulation(sim, model, radius = None, device = DEVICE):
+
+    # get the states
+
+    x, y, resD, resInd = ft.processSimulation(sim,radius=radius)
+    res = []
+    out = np.zeros_like(sim)
+    out[0, :, :] = sim[0, :, :]
+    for i in range(len(x)):
+        pos = x[i][:, :2].cpu().detach().numpy()
+        s = Data(x = x[i][:, 2:], y = y[i], edge_attr = resD[i], edge_index = resInd[i])
+        s = normalizeGraph(s)
+        s = s.to(device)
+        speeds = model(s)
+        if (i+1) < out.shape[0]:
+            out[i+1, :, :] = pos + speeds
+
+    
+    return out
+
+
+def errorPred(pred, gt):
+    
+    return np.abs(pred - gt)
+
+
+
+
+################################################
+
+
+
+

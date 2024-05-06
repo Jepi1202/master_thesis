@@ -302,8 +302,3 @@ def getHeatmap2(fileName, mod):
     errors = torch.abs(v - gt)
     heatmap(errors[8:, :, :].cpu().detach().numpy(), pos[8:, :, :], display = False)
     
-    
-    
-    
-        
-    

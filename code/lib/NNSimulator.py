@@ -5,7 +5,7 @@ import os
 from tqdm import tqdm
 from torch_geometric.data import Data
 from norm import normalizeGraph
-from features import optimized_getGraph, getFeatures
+from features import optimized_getGraph, getFeatures, processSimulation
 
 PATH = os.path.dirname(os.path.abspath(__file__))
 
@@ -39,7 +39,7 @@ class NNSimulator():
         return genSim(self.model, T, state, pos, train = train, debug = debug)
         
         
-def genSim(model, T, state, pos, train = True, debug = None):
+def genSim(model, T, state, pos, radius=None, train = True, debug = None):
     """ 
     Function to simulate froma model T timesteps
 
@@ -56,6 +56,9 @@ def genSim(model, T, state, pos, train = True, debug = None):
         historic of positions (list)
         and the list of speeds if training mode
     """
+    
+    #if radius is None:
+    radius = np.ones(pos.shape[0]) * R_PARAM
 
     pos = pos.to(DEVICE)
     hist = [torch.unsqueeze(pos, dim = 0)]          # [ [1, N, 2] ]
@@ -89,7 +92,7 @@ def genSim(model, T, state, pos, train = True, debug = None):
                 vNext = boundaryEffect(nPose, vNext, BOUNDARY)
 
             yList.append(vNext)
-            state, position = updateData(state, hist[-1][0], vNext)
+            state, position = updateData(state, hist[-1][0], vNext, radius = radius)
             hist.append(torch.unsqueeze(position, dim = 0))
 
         return torch.cat(hist, dim = 0), torch.stack(yList)       # [T, N, 2], [T, N, 2]
@@ -119,7 +122,7 @@ def genSim(model, T, state, pos, train = True, debug = None):
                     nPose = hist[-1][0] + vNext
                     vNext = boundaryEffect(nPose, vNext, BOUNDARY )               
 
-                state, position = updateData(state, hist[-1][0], vNext)
+                state, position = updateData(state, hist[-1][0], vNext, radius = radius)
                 hist.append(torch.unsqueeze(position, dim = 0))
 
         return torch.cat(hist, dim = 0)
@@ -164,22 +167,18 @@ def updateState(prevState, prevPos, speed):
     # get the next positions
     nextPos = prevPos + speed
         
-    # update state
-    R = prevState[:, -1]    # radius [N]
 
     # get new state by concatenation
-    nextState = torch.cat((speed, prevState), dim = -1)
+    nextState = torch.cat((speed, prevState[:, :-2]), dim = -1)
 
-    s = torch.cat((nextState[:, :-3], torch.unsqueeze(R, dim = 1)), dim = -1)
-
-    return s, nextPos
+    return nextState, nextPos
 
 
-def updateData(prevState, prevPose, speed, device = DEVICE, threshold = THRESHOLD_DIST):
+def updateData(prevState, prevPose, speed, radius, device = DEVICE, threshold = THRESHOLD_DIST):
 
     newS, nextPose = updateState(prevState.x,prevPose, speed)
 
-    newGraph, newInds = optimized_getGraph(nextPose.cpu().detach().numpy().copy())
+    newGraph, newInds = optimized_getGraph(nextPose.cpu().detach().numpy().copy(), radius = radius)
 
     data = Data(x = newS, edge_index = newInds, edge_attr = newGraph)
     
@@ -219,12 +218,45 @@ def getSimulationData(model:torch.tensor, nbTimesteps:int, d:np.array, i = 5, di
     if radius is None:
         radius = np.ones(d.shape[1]) * R_PARAM
 
-    x, y = getFeatures(d.copy(), nb = 4)
-    attr, inds = optimized_getGraph(d[i, :, :].copy())
-    s = Data(x = x[i-1][: , 2:], edge_attr = attr, edge_index = inds)
+    x, y, attr, inds = processSimulation(d)
+    data = Data(x = x[i][:, 2:], y = y[i] , edge_attr = attr[i], edge_index = inds[i])
+    pos = x[i][:, :2]
+    s = normalizeGraph(data).to(DEVICE)
 
-    s = normalizeGraph(s).to(DEVICE)
-
-    res = getSimulationVideo(model, torch.from_numpy(d[i, :, :].copy()).float(), nbTimesteps, s, train = train, debug = debug)
+    res = getSimulationVideo(model, pos, nbTimesteps, s, train = train, debug = debug)
     
     return res
+
+
+class OneStepSimulator():
+    def __init__(self, model):
+        self.model = model
+
+    def simulate(self, sim, device = DEVICE):
+
+        hist = np.zeros_like(sim)
+        self.model.eval
+        with torch.no_grad():
+            x, y, attr, inds = processSimulation(sim)
+
+            for t in range(len(x)):
+
+                pos = x[t][:, :2].to(device)
+
+                data = Data(x = x[t][:, 2:], y = y[t] , edge_attr = attr[t], edge_index = inds[t])
+
+                data = normalizeGraph(data).to(DEVICE)
+
+
+                pred = self.model(data)
+                nextPose = pos + pred
+
+                pred[:, 0] = torch.where((nextPose[:, 0] < -BOUNDARY) | (nextPose[:, 0] > BOUNDARY), -pred[:, 0], pred[:, 0])
+                pred[:, 1] = torch.where((nextPose[:, 1] < -BOUNDARY) | (nextPose[:, 1] > BOUNDARY), -pred[:, 1], pred[:, 1])
+
+                nextPose = pos + pred
+
+                hist[t] = nextPose.cpu().numpy()
+
+
+        return hist
