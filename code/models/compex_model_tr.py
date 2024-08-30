@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 #import torch.nn.functional as F
-from modules import *
+from modules import MLP, MLP2, GN3
 import yaml
 
 import os
@@ -46,8 +46,8 @@ class encoder(nn.Module):
     def forward(self, x):
         # x [N, T*2]
         
-        x = x.view(x.shape[0], -1, 2)
-        y = self.upscale(x)     # [N, T, latentShape]
+        y = x.view(x.shape[0], -1, 2)
+        #y = self.upscale(y)     # [N, T, latentShape]
         y = self.transformerEncoder(y)    #[N, T, latenShape]
         y = y.flatten(start_dim=1)
         y = self.linear2(y)

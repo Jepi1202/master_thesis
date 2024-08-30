@@ -18,63 +18,32 @@ feature:
     nbHist: 4  # cfr. inShape
     nbRolloutOut: 10
     output: speed # distance or speed or acceleration
-    inShape: 9
-    edgeShape: 3
+    inShape: 8
+    edgeShape: 5
     
     
 simulation:
-    nbSimLearning: 1000
-    nbValidation: 50
-    nbTest: 50
+    nbSimLearning: 200
+    nbValidation: 20
+    nbTest: 20
     initialization: 'easy'    # random, easy, circle
-    initDistance: 7
+    initDistance: 8
+    initNb: 2
+    initNbPos: 10
     parameters:
-        noisy: 0   # 0: not noisy, 1:noisy
+        noisy: 1   # 0: not noisy, 1:noisy
         nMin: 120
         nMax: 300
         v0: 60
         k: 70
         epsilon: 0.5
-        tau: 3.5
+        tau: 0
         T: 1000
-        dt: 0.001
+        dt: 0.01
         threshold: 6
         R: 1
-        boundary: 120
-        
-        
-training:
-    nbEpoch: 3000
-    modelName: 'model_1_3'
-    evalModel: trainingBestTest.pt
-    saveModel: trainingSavedModTest.pt
-    topk: -1
-    
-    pathData: '/scratch/users/jpierre/test_new'
-    pathJsonBool: True
+        boundary: 120    
 
-    wbName: test
-    rolloutNb: 4
-    batch: 128
-    batchSizeVal: 128
-    lr: 0.0005
-    dataAugment:
-        prob: 0.8
-        stdDeltaPos: 2
-        stdSpeed: 0.003
-    loss:
-        lossScaling: 100
-        l1Reg: 0
-        lim: 35 # cfr. boundary
-        lambdaL2Weights: 0.00005
-    scheduler: 0
-    scheduleParams:
-        size: 1
-        gamma: 0.5
-        
-    frequenceEval: 50
-    frequenceSave: 5000
-
-    nbRoll: 5
-    batchRollout: 32
-    
+path:
+    simulationPath: '/scratch/users/jpierre/mew'
+    pathModel: '/home/jpierre/v2/models'

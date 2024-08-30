@@ -1,0 +1,56 @@
+used_model: 'simple'
+
+simple:
+  input_shape: 8
+  edges_shape: 5
+  output_shape: 2
+  messages_latent: 128
+  MLP_message:
+    hidden_shape: 128
+    dropout: 'no'
+  MLP_update:
+    dropout: 'no'
+  regularization:
+    name: 'l1'
+    scaler: 0.001
+
+
+
+GAT:
+  input_shape: 8
+  edges_shape: 5
+  output_shape: 2
+  number_layers: 2
+  regularization:
+    name: 'l1'
+    scaler: 0.001
+
+
+
+Complex:
+  input_shape: 8
+  edges_shape: 5
+  output_shape: 2
+  number_layers: 2
+  regularization:
+    name: 'l1'
+    scaler: 0.001
+
+
+
+GAM:
+  input_shape: 8
+  edges_shape: 5
+  output_shape: 2
+  MLP_message:
+    hidden_shape: 128
+    dropout: 'no'
+  MLP_update:
+    hidden_shape: 128
+    dropout: 'no'
+  Basis:
+    basis: 'poly'
+    degree: 2
+  regularization:
+    name: 'l1'
+    scaler: 0.001

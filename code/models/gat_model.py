@@ -1,8 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
-import yaml
 
 from torch_geometric.nn import MessagePassing, GATv2Conv
 
@@ -20,7 +17,7 @@ from modules import *
 LATENT_SHAPE = 128
 
 # GNN related parameters
-EDGES_SHAPE = 1
+EDGES_SHAPE = 5
 MESSAGE_SHAPE = 128
 HIDDEN_NN_SHAPE = 128
 
@@ -75,7 +72,7 @@ class GN_NN(nn.Module):
         
         for i in range(nb_gnn):
             #self.GNNLayers.append(GN(latentShape, messageShape, latentShape, edge_shape, hiddenGN))
-            self.GNNLayers.append(GATv2Conv(latentShape, latentShape, heads=1, dropout=0.4, concat=True, edge_dim=3, add_self_loops=False, fill_value=0.0))
+            self.GNNLayers.append(GATv2Conv(latentShape, latentShape, heads=1, dropout=0.4, concat=True, edge_dim=edge_shape, add_self_loops=False, fill_value=0.0))
             self.layerNormList.append(torch.nn.LayerNorm(latentShape))
     
         
@@ -115,6 +112,7 @@ class GN_NN(nn.Module):
 
 
 def loadNetwork(inputShape, edge_shape = EDGES_SHAPE):
+    print(">>>>>>>>>>> Loading GaT model")
     net = GN_NN(inputShape, LATENT_SHAPE, OUTPUT_SHAPE, MESSAGE_SHAPE,edge_shape, HIDDEN_NN_SHAPE)
 
     return net

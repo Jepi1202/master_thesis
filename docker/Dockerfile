@@ -21,6 +21,8 @@ RUN pip install matplotlib
 RUN pip install jupyter
 RUN pip install opencv-python
 RUN pip install wandb
+RUN apt-get update && apt-get install -y graphviz
+RUN pip install torchviz
 
 EXPOSE 8888
 

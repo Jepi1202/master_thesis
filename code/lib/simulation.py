@@ -38,7 +38,7 @@ def calculate_interaction(N, ri, rj, k, epsilon, radii = 1.0):
     if r < bij*(1 + epsilon):
         force = k*(r - bij)*rij/r  
     elif r < bij*(1 + 2*epsilon):
-        force = -k*(r - bij - 2*epsilon)*rij/r
+        force = -k*(r - bij - 2*epsilon*bij)*rij/r
     else:
         force = 0.0
     return force

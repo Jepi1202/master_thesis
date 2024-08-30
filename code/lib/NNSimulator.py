@@ -213,7 +213,7 @@ def getSimulationVideo(model:torch.tensor, initPos:torch.tensor, nbTimesteps:int
     return res
 
 
-
+# only different function
 def getSimulationData(model:torch.tensor, nbTimesteps:int, d:np.array, i = 5, display =True, train = False, debug = None, radius = None) -> torch.tensor:
     if radius is None:
         radius = np.ones(d.shape[1]) * R_PARAM

@@ -1,0 +1,190 @@
+feature:
+  distGraph: 6
+  edgeShape: 5
+  inShape: 8
+  nbHist: 4
+  nbRolloutOut: 10
+  output: speed
+normalization:
+  distance:
+    maxDistance: 6
+    minDistance: 0
+  normalization_type: default
+  position:
+    maxPos: 120
+    minPos: -120
+  radius:
+    maxRad: 2
+    minRad: 0
+  speed:
+    maxSpeed: 15
+    minSpeed: -15
+simulation:
+  initDistance: 7
+  initialization: easy
+  nbSimLearning: 1000
+  nbTest: 10
+  nbValidation: 20
+  parameters:
+    R: 1
+    T: 1000
+    boundary: 120
+    dt: 0.001
+    epsilon: 0.5
+    k: 70
+    nMax: 300
+    nMin: 120
+    noisy: 0
+    tau: 3.5
+    threshold: 6
+    v0: 60
+training:
+  batch: 32
+  batchSizeVal: 128
+  batch_rollout: 1
+  cfg_mod:
+    BASELINE_CFG:
+      MLP_message:
+        dropout: 'no'
+        hidden_shape: 128
+        message_shape: 2
+      MLP_update:
+        dropout: 'no'
+        hidden_shape: 128
+      action-reacion: 'no'
+      edges_shape: 5
+      input_shape: 8
+      output_shape: 2
+      regularization:
+        name: 'NO'
+        scaler: 0.0
+    GAM_CFG:
+      Basis:
+        basis: poly
+        degree: 2
+        nDim: 2
+      MLP_message:
+        dropout: 'no'
+        hidden_shape: 128
+      MLP_update:
+        dropout: 'no'
+        hidden_shape: 128
+      action-reacion: 'no'
+      edges_shape: 5
+      input_shape: 8
+      output_shape: 2
+      regularization:
+        name: l1
+        scaler: 0.01
+    GAT_CFG:
+      action-reacion: 'no'
+      decoder:
+        dropout: 'no'
+        hidden_shape: 128
+        presence: 'no'
+      edges_shape: 5
+      encoder:
+        dropout: 'no'
+        latent_edge: 128
+        out_shape: 128
+        presence: 'no'
+      input_shape: 8
+      layer:
+        dropout: 0.0
+        hidden_shape: 128
+        message_shape: 128
+      layer_norm: 1
+      nb_layers: 3
+      output_shape: 2
+      regularization:
+        name: l1
+        scaler: 0.01
+    GNN_CFG:
+      decoder:
+        dropout: 'no'
+        hidden_shape: 128
+        presence: 'no'
+      edges_shape: 5
+      encoder:
+        dropout: 'no'
+        latent_edge: 128
+        out_shape: 128
+        presence: 'no'
+      input_shape: 8
+      layer:
+        MLP_message:
+          dropout: 'no'
+          hidden_shape: 128
+          message_shape: 128
+        MLP_update:
+          dropout: 'no'
+          hidden_shape: 128
+        dropout: 'no'
+        edges_shape: 128
+        hidden_shape: 128
+        input_shape: 128
+        message_shape: 128
+        regularization:
+          name: l1
+          scaler: 0.01
+      layer_norm: 1
+      nb_layers: 3
+      output_shape: 2
+      regularization:
+        name: l1
+        scaler: 0.01
+    INTERACTION_CFG:
+      MLP_message:
+        dropout: 'no'
+        hidden_shape: 128
+        message_shape: 128
+      MLP_update:
+        dropout: 'no'
+        hidden_shape: 128
+      action-reacion: 'no'
+      edges_shape: 5
+      input_shape: 8
+      output_shape: 2
+      regularization:
+        name: l1
+        scaler: 0.01
+    model_name: BASELINE_CFG
+  dataAugment:
+    bool: 1
+    prob: 0.8
+    stdDeltaPos: 2
+    stdSpeed: 0.003
+  dt_update: 1
+  evalModel: baseline_action-react_best.pt
+  frequenceEval: 50
+  frequenceSave: 5000
+  l1_gam: 0.01
+  loss:
+    l1Reg: 0
+    lambdaL2Weights: 5.0e-05
+    lim: 35
+    lossScaling: 100
+    topk: -1
+  lr: 0.001
+  modelName: baseline_action-react
+  nbEpoch: 3000
+  pJson: ''
+  pathData: /scratch/users/jpierre/mew_0.001_noisy_v2
+  pathJsonBool: true
+  rolloutNb: 4
+  saveModel: baseline_action-react_latest.pt
+  scheduler: exp
+  scheduler_exp:
+    gamma: 0.9
+  scheduler_linear:
+    gamma: 0.5
+    size: 1
+  tag:
+  - baseline_action-react
+  - layer_norm-0
+  - dropout-0
+  - nb_layer-0
+  - delta
+  - noisy
+  training_type: 1-step
+  wbName: mt-baseline_action-react_noisy_scaleL1-0_dropout-0

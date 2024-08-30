@@ -2,14 +2,13 @@ import torch
 import os 
 import sys
 import yaml
-import wandb
 import numpy as np
 from typing import Optional, Union
 from tqdm import tqdm
 
 
 
-from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import StepLR, ExponentialLR
 import features as ft
 from norm import normalizeGraph
 from NNSimulator import genSim, getSimulationData
@@ -18,21 +17,18 @@ from torch_geometric.loader import DataLoader
 from dataLoading import DataGraph
 
 
-
 PATH = os.path.dirname(os.path.abspath(__file__))
 
 with open(os.path.join(PATH, 'cfg.yml'), 'r') as file:
     cfg = yaml.safe_load(file) 
 
-FEATURE_SHAPE = 9
-EDGE_SHAPE = 3
-R_PARAM = 0.1
+FEATURE_SHAPE = 8
+EDGE_SHAPE = 5
+R_PARAM = 1
 MIN_RAD = cfg['normalization']['radius']['minRad']
 MAX_RAD = cfg['normalization']['radius']['maxRad']
 BOUNDARY = cfg['simulation']['parameters']['boundary']
 
-MIN_DELTA = -8
-MAX_DELTA = 8
 
 
 print('loading training')
@@ -42,6 +38,172 @@ PATH_RESULT = '/home/jpierre/v2/results'                                    # to
 PATH_DEPO_MODELS = '/home/jpierre/v2/trained_models' 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+from measure import Param_eval, EvaluationCfg, evaluateLoad, saveLoader
+import wandb
+
+
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+import matplotlib.pyplot as plt
+import cv2
+
+
+def plt2frame(fig):
+    canvas = FigureCanvas(fig)
+    canvas.draw()
+    frame = np.frombuffer(canvas.buffer_rgba(), dtype='uint8')
+    frame = frame.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+    frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2RGB)
+    plt.close(fig)
+
+    return frame
+
+
+def getSparsityPlot(messages, videoOut = True):
+
+    #stdMessage = np.std(messages,axis = -1)
+    stdMessage = np.std(messages,axis = 0)
+    
+    fig, ax = plt.subplots(1, 1)
+    ax.pcolormesh(stdMessage[np.argsort(stdMessage)[::-1][None, :15]], cmap='gray_r', edgecolors='k')
+    plt.axis('off')
+    plt.grid(True)
+    ax.set_aspect('equal')
+    plt.text(15.5, 0.5, '...', fontsize=30)
+    plt.tight_layout()
+
+    if videoOut:
+        return plt2frame(fig)
+    
+    else:
+        return None
+
+
+def create_mp4_with_frames(output_path, frames, fps=10):
+    if not frames:
+        raise ValueError("No frames to write to video.")
+    
+    height, width, _ = frames[0].shape
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    video_writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+    for frame in frames:
+        video_writer.write(frame)
+    
+    video_writer.release()
+
+
+def combine_video_with_new_frame(input_path, output_path, new_frame):
+    cap = cv2.VideoCapture(input_path)
+    if not cap.isOpened():
+        print(f"Error: Cannot open video file {input_path}")
+        return
+
+    frames = []
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frames.append(frame)
+    
+    cap.release()
+    frames.append(new_frame)
+    create_mp4_with_frames(output_path, frames)
+
+
+
+def getVideo(model, data, device = DEVICE):
+    model.eval()
+    data = data.to(device)
+    with torch.no_grad():
+        messages = model.GNN.message(None, None, data.edge_attr).cpu().detach().numpy()
+
+        p = os.path.join(os.getcwd(), 'video_l1_bar.mp4')
+        frame = getSparsityPlot(messages)
+
+        if not os.path.exists(p):
+            create_mp4_with_frames(p, [frame])
+        else:
+            combine_video_with_new_frame(p, p, frame)
+
+
+def save_checkpoint(step,
+                    model, 
+                    optimizer, 
+                    scheduler,
+                    path):
+
+
+    checkpoint = {
+        'step': step,
+        'model': model,
+        'optimizer': optimizer,
+        'scheduler': scheduler
+    }
+
+
+    torch.save(checkpoint, path)
+
+
+class PersScheduler():
+    def __init__(self, optimizer, type:str, params = None, verbose:bool = True):
+
+        self.type = type
+        self.params = params
+        self.verbose = verbose
+
+        if type == 'exp':
+
+            gamma = params
+            if params is None:
+                gamma = 0.9
+
+            if verbose:
+                print(f'INFO >>>>> Exponential scheduler with gamma <{gamma}>')
+
+            self.scheduler = ExponentialLR(optimizer, gamma=params)
+                
+
+        elif type == 'no':
+            if verbose:
+                print(f'INFO >>>>> No scheduler')
+
+            self.scheduler = None
+
+        else:
+            print('ERROR >>>>  NO KNOWN SCHDULER --- using NONE')
+            self.scheduler = None
+
+
+    def getScheduler(self):
+        return self.scheduler
+    
+
+    def stepScheduler(self, fun = None, params = None):
+        if fun is not None:
+            fun(self.scheduler, *params)
+
+        else:
+            if self.scheduler:
+                self.scheduler.step()
+
+
+class DataAugBloc():
+    def __init__(self, fun = None, params = None):
+
+        self.fun = fun
+        self.params = params
+
+    def augmentData(self, data):
+        if self.fun is None:
+            return data
+        
+        return self.fun(data, *self.params)
+        
+
+class PredictionBloc():
+    def __init__(self, params):
+        pass
+
 
 class paramsLearning():
     """ 
@@ -50,51 +212,82 @@ class paramsLearning():
 
     def __init__(self):
 
-        self.wbName = None
         self.nbEpoch = None
-        self.lr = None
+        self.batchSize = 16
+        self.shuffleBool = True
+        self.nbRoll = None
 
-        self.schedule = None
-        self.scheduleBool = False
-        self.size = None
-        self.gamma = None
+
+        ## model elements
+
+        self.modelName = None
+        self.model_dict = None
+        
+
+        ## evaluate elements
 
         self.freqEval = None
-        self.freqSave = None
+        self.minEvalLoss = float('inf')
 
-        self.loader = None
-        self.batchSize = 32
-        self.shuffleBool = True
-        #self.loaderEval = None
-        #self.lodaerLearning = None
 
-        self.wdecay = None
+        ## loss elements
+
+        self.type_training = None
+        self.number_rollouts_training = None
         self.L1LossReg = 0
         self.lossScaling = 1
-        
-        # not implemented
-        #self.dataAug = None     # data augmentation function
-        #self.lossFun = None
+        self.topk = None
 
 
+        ## Data elements
+
+        self.pathData = None
+        self.loader = None
+        self.evalLoaderTorch = None
+        self.evalLoaderSim = None
+        self.dt_add = False                     ##########
+        self.dt = None                          ##########
+
+        ## Optimizer elements
+
+        self.optimizer_type = None
+        self.lr = None
+        self.wdecay = None
+        self.optimizer = None
+
+
+        ## scheduler elements
+
+        self.schedule = None
+
+
+        ## Data augmentation elements
+
+        self.augBool = 1
         self.probDataAug = 0
         self.stdSpeed = 0
         self.stdDeltaPos = 0
 
-        self.minEvalLoss = float('inf')
+
+        ## Save elements
+
+        self.freqSave = None
+        self.wbName = None
         self.pathSaveEval = None
-
-        self.evalLoaderTorch = None
-        self.evalLoaderSim = None
-
-        self.opitmizer = None
-        self.limitDist = float('inf')
-
         self.pathSaveFull = None
 
-        self.nbRoll = None      # new
+        
+        ## Other (not used)
+        
+
+
+        self.limitDist = float('inf')
+
         self.gammaLoss = [0.95 ** i for i in range(80)]
         self.batchRollout = None
+        
+        
+        self.displayBoolAug = 1
 
     def _loadParameters(self, params = None):
         if params is None:
@@ -123,111 +316,53 @@ class paramsLearning():
 
     @property
     def parameters(self):
-        print(f'Wandb Name >>>> {self.wbName}')
-        print(f'Number of Epochs >>>> {self.nbEpoch}')
-        print(f'Learning Rate >>>> {self.lr}')
-        print(f'Schedule >>>> {self.schedule}')
-        print(f'Schedule Boolean >>>> {self.scheduleBool}')
-        print(f'Size >>>> {self.size}')
-        print(f'Gamma >>>> {self.gamma}')
-        print(f'Frequency of Evaluation >>>> {self.freqEval}')
-        print(f'Frequency of Saving >>>> {self.freqSave}')
-        print(f'Simulation Loader >>>> {self.loaderSim}')
-        print(f'Weight Decay >>>> {self.wdecay}')
-        print(f'L1 Loss Regularization >>>> {self.L1LossReg}')
-        print(f'Loss Scaling Factor >>>> {self.lossScaling}')
-        print(f'Probabiltiy of data augmentation >>>> {self.probDataAug}')
-        print(f'Standard deviation of speed >>>> {self.stdSpeed}')
-        print(f'Standard deviation displacement >>>> {self.stdDeltaPos}')
+        params = {
+            attr: getattr(self, attr) for attr in dir(self) 
+            if not callable(getattr(self, attr)) and not attr.startswith("__")
+        }
+        for key, value in params.items():
+            print(f'{key}: {value}')
 
 
 
-
-def loadModel(modelName:str, inputShape:int = FEATURE_SHAPE, edges_shape = EDGE_SHAPE, path = PATH_MODEL):
-    """ 
-    Function to import the model
-
-    Args:
-    -----
-        - `modelName`: name of the model
-        - `inputShape`: inout shape of the NN
-        - `edges_shape`: edge shape of the NN
-        - `path`: path where the models are
-    """
-
-    sys.path.append(path)
-
-    loadFun = __import__(f'{modelName}', fromlist = ('loadNetwork'))
-
-    model = loadFun.loadNetwork(inputShape, edges_shape)
-
-    return model
-
-
-
-def setUp(model, paramsLearning:paramsLearning):
-    """ 
-    Function to initialize the learning
-
-    Args:
-    -----
-        - `model`:
-        - `paramsLearning`:
-
-    Returns:
-    --------
-        the optimizer and the scheduler
-    """
-
-    wbName = paramsLearning.wbName
-    lr = paramsLearning.lr
-    weightDecay = paramsLearning.wdecay
-    scheduleBool = paramsLearning.scheduleBool
-    scheduleSize = paramsLearning.size
-    scheduleGamma = paramsLearning.gamma
-
-    wandb.init(project = 'master_thesis', name = f"{wbName}")
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weightDecay)
-
-    if scheduleBool:
-        lr_scheduler = StepLR(optimizer=optimizer, step_size=scheduleSize, gamma=scheduleGamma)
-    else:
-        lr_scheduler = False
-    
-    #wandb.watch(model, log = 'all', log_freq=100)
-    model.train()
-
-    return optimizer, lr_scheduler
-
-
-
-def dataAugFun(data, params:paramsLearning, device = DEVICE):
+def dataAugFun(data, params, device = 'cpu'):
     """ 
     Data augmentation function
     Implements only the noisy steps on the speeds ...
     """
 
-    pCutoff = params.probDataAug
-    #stdSpeed = params.stdSpeed
-    #stdDeltaPos = params.stdDeltaPos
-    stdSpeed = 0.02
-    stdDeltaPos = 0.05
-    stdCos = 0.01
-        
-    p2 = np.random.uniform(0, 1)
-    if p2 < pCutoff:   #noise
-        rdNb = torch.normal(mean=0, std=stdSpeed, size=data.x.shape).to(device)
-        rdNb2 = torch.normal(mean=0, std=stdDeltaPos, size=data.edge_attr.shape[0]).to(device)
-        rdNb3 = torch.normal(mean=0, std=stdDeltaPos, size=(data.edge_attr.shape[0], 2)).to(device)
 
-        data.x += rdNb
-        data.edge_attr[:, 0] += rdNb2
-        data.edge_attr[:, 1:3] += rdNb3
+    pCutoff = params.probDataAug
+    augBool = params.augBool
+    
+    
+    if params.displayBoolAug:
+        print('>>>>>>> INFOS: data augmentation:')
+        print(f'probability of the data augmentation >>> {pCutoff}')
+        print(f'activation of the data augmentation >>> {augBool}')
+        params.displayBoolAug = False
+        
+    if augBool:
+        stdSpeed = 0.01 * torch.abs(data.x)
+        meanSpeedNormal = torch.zeros_like(data.x)
+        stdDeltaPos = 0.02
+        stdCos = 0.002
+        stdRadius = 0.0005
+
+        p2 = np.random.uniform(0, 1)
+        if p2 < pCutoff:   #noise
+            rdNb = torch.normal(mean=meanSpeedNormal, std=stdSpeed).to(device)
+            rdNb2 = torch.normal(mean=0, std=stdDeltaPos, size=(data.edge_attr.shape[0], 1), device=device)
+            rdNb3 = torch.normal(mean=0, std=stdCos, size=(data.edge_attr.shape[0], 2), device=device)
+            rdNb4 = torch.normal(mean=0, std=stdRadius, size=(data.edge_attr.shape[0], 2), device=device)
+
+            data.x += rdNb
+            data.edge_attr[:, 0] += rdNb2.squeeze()
+            data.edge_attr[:, 1:3] += rdNb3
+            data.edge_attr[:, 3:] += rdNb4
 
 
     return data
-
 
 
 def lossFun(preds:torch.tensor, gts:torch.tensor, binaries:Optional[Union[None, torch.tensor]] = None, topk = None):
@@ -242,8 +377,9 @@ def lossFun(preds:torch.tensor, gts:torch.tensor, binaries:Optional[Union[None, 
         - `topk`:
     """
 
-    # compute the L2 distance
-    res = (preds - gts)**2
+    # compute the L1 distance
+    res = torch.square(preds - gts)
+    #res = torch.square(preds - gts) / (gts ** 2)
 
     # only take the elements that are definded wrt binaries
     if binaries is not None:
@@ -252,7 +388,8 @@ def lossFun(preds:torch.tensor, gts:torch.tensor, binaries:Optional[Union[None, 
     # only select the k worst losses
     res = res.view(-1)
     if topk is not None:
-        res, _ = torch.topk(res, topk)
+        topkC = int(res.shape[0] * topk)
+        res, _ = torch.topk(res, topkC)
         
     return torch.mean(res)
 
@@ -288,35 +425,35 @@ def evaluate(model, params:paramsLearning, device = DEVICE):
     loaderTorch = params.evalLoaderTorch
     loaderSim = params.evalLoaderSim
 
-    evalLoss = 0
-    evalLossSim = 0
+    
+    cfg_eval = EvaluationCfg()
+    cfg_eval.norm_angleError = Param_eval(wandbName = 'fdsf')
+    #cfg_eval.L1_vect = Param_eval(wandbName = 'Std message')
+    cfg_eval.degree_error = Param_eval(wandbName = 'Degree error')
+    cfg_eval.dist_error = Param_eval(wandbName = 'Distance error')
     model.eval()
+    
+    evalLossSim = 0
 
     with torch.no_grad():
 
         if loaderTorch is not None:
-
-            for d, _ in loaderTorch:
-                d = d.to(device)
-                d.x = d.x[:, 2:]
-                d = normalizeGraph(d)
-                res = model(d)  
-                
-                d.y = torch.swapaxes(d.y, 0, 1)
-                
-
-                evalLoss += torch.nn.functional.l1_loss(res.reshape(-1), d.y[0, :, :].reshape(-1))
-                
-                break
-                
-
-            #nb grad is none for normalization layer 
+            res = evaluateLoad(loaderTorch, model, cfg_eval, device = device) 
+            
+            evalLoss = res['evalLoss']
 
             if evalLoss < minEvalLoss:
                 minEvalLoss = evalLoss
                 torch.save(model.state_dict(), path_result_MIN)
             
             #wandb.log({'step': i,'eval_loss': evalLoss / len(loaderTorch)})
+            
+            saveLoader(res, cfg_eval)
+
+
+            for data_ev, _ in loaderTorch:
+                getVideo(model, data_ev)
+                break
 
 
 
@@ -346,12 +483,16 @@ def train_1step(model, params:paramsLearning, device = DEVICE, debug:bool = True
     nbEpoch = params.nbEpoch
     optimizer = params.optimizer
     limitDist = params.limitDist
-
+    schedule = params.schedule
+    
     topk = params.topk
+    print(f'topk >>>> {topk}')
     scaleLoss = params.lossScaling
     scaleL1 = params.L1LossReg
 
     pathSave = params.pathSaveFull
+
+    cfg_save = params.cfg_save
 
 
     model.train()
@@ -381,7 +522,10 @@ def train_1step(model, params:paramsLearning, device = DEVICE, debug:bool = True
 
             out = model(data)
             
-            nextPose = pos + out
+            if params.dt_add:
+                nextPose = pos + out * params.dt
+            else:
+                nextPose = pos + out
             
             out[:, 0] = torch.where((nextPose[:, 0] < -BOUNDARY) | (nextPose[:, 0] > BOUNDARY), -out[:, 0], out[:, 0])
             out[:, 1] = torch.where((nextPose[:, 1] < -BOUNDARY) | (nextPose[:, 1] > BOUNDARY), -out[:, 1], out[:, 1])
@@ -409,7 +553,7 @@ def train_1step(model, params:paramsLearning, device = DEVICE, debug:bool = True
                     wandb.log({'step': i, 'epoch':epoch, 'Max_paramVal':max_param_value, 'loss pred': loss0, 'L1 Reg':loss1})
                     
 
-            if ((i+1) % 500 == 0 or i == 0):
+            if ((i+1) % 1500 == 0 or i == 0):
                 model.eval()
                 with torch.no_grad():
                     evalLoss, evalLossSim = evaluate(model, params, device = device)
@@ -421,9 +565,15 @@ def train_1step(model, params:paramsLearning, device = DEVICE, debug:bool = True
             if (i % 10000) == 0:
                 torch.save(model.state_dict(), pathSave)
 
+                name_checkt_save = f'{cfg_save.split('.')[0]}_step-{i}.pth'
+                save_checkpoint(i, model, optimizer, schedule.scheduler, name_checkt_save)
+
 
 
             i += 1
+        #schedule.step()
+        schedule.stepScheduler()
+        print(optimizer.param_groups[0]['lr'])
 
 
     return model
@@ -446,14 +596,21 @@ def train_roll(model, params:paramsLearning, device = DEVICE, debug:bool = True)
     batchRollout = params.batchRollout
     # apply some gamma later ...
 
+    cfg_save = params.cfg_save
+
+
 
     model.train()
     i = 0
     cumLoss = 0
+    
+    #print('test0')
 
     for epoch in range(nbEpoch):
             
         for data, idx in tqdm(loader):
+            
+            #print('test1')
             
             optimizer.zero_grad()
 
@@ -469,10 +626,13 @@ def train_roll(model, params:paramsLearning, device = DEVICE, debug:bool = True)
 
 
             bina = None
-
-            data = dataAugFun(data, params = params)
+            
+            #print('test2')
+            #data = dataAugFun(data, params = params)
             data = normalizeGraph(data)
 
+
+            #### modify for the dt update
             if nb_rolling > 1:                 
                 _, out = genSim(model, nb_rolling, data, pos, train = True)
                 
@@ -480,7 +640,7 @@ def train_roll(model, params:paramsLearning, device = DEVICE, debug:bool = True)
             else:
                 out = model(data)
                 
-                
+            #print('test3')
             y = torch.swapaxes(y, 0, 1)   
             
 
@@ -522,6 +682,9 @@ def train_roll(model, params:paramsLearning, device = DEVICE, debug:bool = True)
 
             if (i % 10000) == 0:
                 torch.save(model.state_dict(), pathSave)
+
+                name_checkt_save = f'{cfg_save.split('.')[0]}_step-{i}.pth'
+                save_checkpoint(i, model, optimizer, schedule.scheduler, name_checkt_save)
 
             
             i += 1

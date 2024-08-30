@@ -1,14 +1,36 @@
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+from norm import normalizeGraph
+from torch_geometric.data import Data
+from torch_geometric.utils import degree as deg
+from tqdm import tqdm
 
-DEVICE = torch.cuda.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+
+import wandb
+
+DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+
+NB_ROLL = 80
+START_ID = 8
 
 
 class Param_eval():
     def __init__(self, path = None, wandbName = None):
         self.path = path
         self.wandbName = wandbName
+
+
+    def save(self):
+        if self.path:
+            plt.savefig(self.path)
+            plt.close()
+
+        else:
+            wandb.log({f"{self.wandbName}": wandb.Image(plt)})
+            plt.close()
 
 class EvaluationCfg():
     def __init__(self):
@@ -25,9 +47,26 @@ class EvaluationCfg():
 
         self.degree_error = None
 
+        self.dist_error = None
+
+        self.MSD = None
+
+        self.Intermediate = None
+        
 
 
-def evaluateLoad(loader, cfg: EvaluationCfg, device = DEVICE):
+
+def evaluateLoad(loader, model, cfg: EvaluationCfg, device = DEVICE):
+    """ 
+    Function to comlpute the different statistics
+
+    Args:
+    -----
+        - ``
+        - ``
+        - ``
+        - ``
+    """
 
     evalLoss = 0
     nbCall = len(loader)
@@ -41,7 +80,7 @@ def evaluateLoad(loader, cfg: EvaluationCfg, device = DEVICE):
     angleError = []         # list of angles errors
     messages = None
     
-    for d, _ in loader:
+    for d, _ in tqdm(loader, leave = False):
         d = d.to(device)
         d.x = d.x[:, 2:]
         d = normalizeGraph(d)
@@ -52,6 +91,7 @@ def evaluateLoad(loader, cfg: EvaluationCfg, device = DEVICE):
 
         evalLoss += torch.nn.functional.l1_loss(pred.reshape(-1), d.y[0, :, :].reshape(-1))
 
+        errors = torch.mean(torch.abs(pred - d.y[0, :, :]),dim = -1)
 
         if cfg.jacobian:
             pass
@@ -64,6 +104,7 @@ def evaluateLoad(loader, cfg: EvaluationCfg, device = DEVICE):
 
 
         if cfg.dist_error:
+            dist = d.edge_attr[:, 0]
             distList.extend(dist.cpu().numpy().tolist()) 
             if not cfg.degree_error:
                 errorList.extend(errors.cpu().numpy().tolist())
@@ -76,8 +117,8 @@ def evaluateLoad(loader, cfg: EvaluationCfg, device = DEVICE):
             angleError.extend(errorAngle.tolist())
 
 
-        if self.L1_vect:
-            m = getStdMessage(mod, s.edge_attr)
+        if cfg.L1_vect:
+            m = getStdMessage(model, d.edge_attr)
             if messages is None:
                 messages = m
             else:
@@ -103,13 +144,43 @@ def evaluateLoad(loader, cfg: EvaluationCfg, device = DEVICE):
     if cfg.norm_angleError:
         normError = np.array(normError)
         angleError = np.array(angleError)
-        res['angleError'] = angleError
+        res['angleError'] = angleError * 180 / np.pi
         res['normError'] = normError
+
+    if cfg.L1_vect:
+        res['message'] = messages
 
 
     res['evalLoss'] = evalLoss
+    wandb.log({'eval loss': evalLoss})
 
     return res
+
+
+def saveLoader(d, cfg: EvaluationCfg):
+    """ 
+    Function to obtain the satistics 
+    """
+
+    if cfg.L1_vect:
+        plotStdMessage(d['message'])
+        cfg.L1_vect.save()
+
+    if cfg.norm_angleError:
+        saveWbAnglesNorm(d['angleError'], d['normError'])
+
+    if cfg.dist_error:
+        plotDistLoss(d['distList'], d['errorList'])
+        cfg.dist_error.save()
+
+    if cfg.degree_error:
+        plotDegreeLoss(d['degreeList'], d['errorList'])
+        cfg.degree_error.save()
+
+
+
+
+###################################################################
 
 
 def evaluateSim(loader, cfg, device = DEVICE):
@@ -118,7 +189,7 @@ def evaluateSim(loader, cfg, device = DEVICE):
     data_x = None
     data_y = None
 
-    nbRoll = 80
+    nbRoll = NB_ROLL
     nbCalls = len(loader)
 
     evalLossSim = 0
@@ -127,8 +198,8 @@ def evaluateSim(loader, cfg, device = DEVICE):
     for d, _ in loader:
                     
         d = torch.squeeze(d, dim = 0).numpy()
-        start = 8       # not 0
-        res = getSimulationData(model, nbRoll, d, i = start)
+        start = START_ID       # not 0
+        #res = getSimulationData(model, nbRoll, d, i = start)
 
         if data_x is None:
             data_x = res.numpy()
@@ -155,6 +226,16 @@ def evaluateSim(loader, cfg, device = DEVICE):
 
 
     return res
+
+
+################################################
+
+def compareModels(modelList, cfg):
+    pass
+
+################################################
+# one-step stats / measure
+################################################
 
     
 def compute_jacobian(model, inputs) -> torch.Tensor:
@@ -268,7 +349,286 @@ def meanJacobian(model, input):
     return np.mean(j1, axis = 0), np.mean(j2, axis = 0), np.mean(jedge1, axis = 0), np.mean(jedge2, axis = 0)
 
 
-####################################
+################################################
+
+
+def errorsDiv(pred, gt):
+    
+    v = np.pi * 2
+    anglePred = np.arctan2(pred[:, 1], pred[:, 0])
+    angleGT = np.arctan2(gt[:, 1], gt[:, 0])
+
+    normPred = np.linalg.norm(pred, axis=-1)
+    normGT = np.linalg.norm(gt, axis=-1)
+
+    errorNorm = np.abs(normPred - normGT)
+    errorAngle = errorAngle = np.abs((anglePred - angleGT + np.pi) % (2 * np.pi) - np.pi)
+
+    return errorAngle, errorNorm
+
+
+def saveWbAnglesNorm(errorAngle, errorNorm):
+    wandb.log({'Median Angle Error':np.median(errorAngle) })
+    wandb.log({'Median Norm Error': np.median(errorNorm) })
+
+    return None
+
+
+
+################################################
+
+
+def getStdMessage(model, attr):
+    model.eval()
+    with torch.no_grad():
+        v = model.GNN.message(None, None, attr).cpu().detach().numpy()
+    return v
+
+
+
+def plotStdMessage(messages):
+
+    std = np.std(messages, axis = 0)
+
+    plt.plot(std)
+    plt.xlabel('features')
+    plt.ylabel('Standard Deviation')
+
+    return std
+
+
+################################################
+
+
+def plotDegreeLoss(degreeList, errorList):
+    maxBin = min(np.max(degreeList), 8)
+    bins = np.arange(maxBin+2) - 0.5
+
+    plotBoxPlot(degreeList, errorList, bins, xlabel = 'Degree', ylabel = 'L1 Error')
+
+    return None
+
+
+
+################################################
+
+
+def plotDistLoss(distList, errorList):
+    bins = np.linspace(0, 6, 20)
+
+    plotBoxPlot(distList, errorList, bins, xlabel = 'Distance', ylabel = 'L1 Error')
+
+    return None
+
+
+
+
+################################################
+# simulation stats / measure
+################################################
+
+
+def MSE_rollout(roll, sim, display:bool = False):
+    x = np.arange(roll.shape[0])
+    vals = ((roll - sim) ** 2).reshape(x.shape[0], -1)
+    y = np.mean(vals, axis=1)
+    std = np.std(vals, axis=1)
+
+    if display:
+        plt.plot(x, y, 'blue')
+        plt.fill_between(x, y-std, y+std, zorder=  2)
+        plt.xlabel('Time')
+        plt.ylabel('Rollout MSE')
+        plt.grid(zorder = 1)
+
+    return x, y
+
+
+def applyMSE_rollout(simList, predList, color = 'blue', display:bool = False):
+
+    res = np.zeros((len(simList), simList[0].shape[0]))
+
+    for i in range(len(simList)):
+        res[i] = MSE_rollout(predList[i], simList[i])
+
+    res = np.mean(res, axis = 0)
+
+    x = np.arange(res.shape[0])
+    if display:
+        plt.plot(x, res, 'blue')
+        #plt.fill_between(x, y-std, y+std, zorder=  2)
+        plt.xlabel('Time')
+        plt.ylabel('Rollout MSE')
+        plt.grid(zorder = 1)
+
+
+################################################
+
+
+def MSD_comp(traj, tau):
+    T = traj.shape[0]
+    i = np.arange(T - tau)
+    j = i + tau
+
+    return np.linalg.norm(traj[j, :, :] - traj[i, :, :], axis=-1)**2
+
+def MSD(traj: np.array)-> np.array:
+    """
+    Allows to compute the Mean Squared Displacement of the trajectories for all timestamps
+    
+    Args:
+    -----
+    - `traj`: np.array of N trajectories of length T [NxT]
+    
+    Output:
+    -------
+    Mean Squared Displacement for all timestamps
+    """
+
+    res = []
+    T = traj.shape[0]
+    
+    for tau in range(1, T):
+        val = np.mean(np.mean(MSD_comp(traj, tau), axis=0), axis=0)
+        res.append(val)
+
+    return res
+
+def applyMSD(sims:list, dislpay:bool = False, color:str = 'blue')->np.array:
+    """ 
+    Function to apply MSD to a group of simulations
+
+    NOTE: test
+
+    Args:
+    -----
+        - `sims` (list): list of simualtions
+
+    Returns:
+    --------
+        np array [#Sim, T-1] of MSD computations
+    """
+
+    res = np.zeros((len(sims), sims[0].shape[0]-1))
+    for i in range(len(sims)):
+        sim = sims[i]
+        res[i, :] = np.array(MSD(sim))
+
+
+    if dislpay:
+        x = np.arange(sims[0].shape[0]-1)
+        y = np.mean(res, axis = 0)
+        std = np.std(res, axis = 0)
+        plt.plot(x, y, color = color, zorder = 1)
+        #plt.fill_between(x, y - std, y+std, color = 'red', alpha = 0.4, zorder = 2)
+        
+        plt.xlabel('Time')
+        plt.ylabel('MSD')
+
+    return res
+
+
+################################################
+
+def SelfIntermediateA(data, qval, verbose=False):
+    T, N, _ = data.shape  # T is the number of time steps, N is the number of particles
+    qval = np.array(qval, dtype=np.complex128)  # Ensure wave vector is complex for the computation
+    
+    SelfInt = np.empty((T-1,), dtype=np.complex128)
+    
+    for t in range(T-1):
+        smax = T - t  
+        
+        rt = data[:smax]       
+        rtplus = data[t:] 
+        dr = rt - rtplus
+        
+        exp_factor = np.exp(1j * (qval[0] * dr[:, :, 0] + qval[1] * dr[:, :, 1]))
+        
+        SelfInt[t] = np.sum(exp_factor) / (N * smax)
+    
+    SelfInt_mod = np.sqrt(np.real(SelfInt)**2 + np.imag(SelfInt)**2)
+    
+    tval = np.linspace(0, T-1, num=T-1)
+    
+    if verbose:
+        plt.figure(figsize=(10, 5))
+        plt.semilogy(tval, SelfInt_mod, '.-r', lw=2)
+        plt.xlabel('time')
+        plt.ylabel('F_s(k,t)')
+        plt.title('Self-intermediate Function')
+        plt.grid(True)
+        plt.ylim([0, 1])
+        plt.show()
+    
+    return tval, SelfInt_mod, SelfInt
+
+
+def applySelfScattering(simList, qval = None, display:bool = False, color = 'blue'):
+    if qval is None:
+        R = 1       #ngfjdngjdnsjhnjfnvjfdnbjvnfdjkgnfjkdhvbjkdhgjklhgjkd
+        qval = 2*np.pi/R*np.array([1,0])
+
+    res = np.zeros((len(simList),simList[0].shape[0]-1 ))
+
+    for i in range(len(simList)):
+        sim = simList[i]
+
+        val = SelfIntermediateA(sim.copy(), qval.copy(), verbose = False)[1]
+        res[i] = val
+
+    r = np.mean(res, axis=0)
+    delta = np.std(r, axis = 0)
+
+    if display:
+        plt.figure(figsize=(10, 5))
+        t = np.arange(1, simList[0].shape[0])
+
+        plt.grid()
+        plt.semilogy(t, r, color = color, lw=2)
+       # plt.fill_between(t, r-delta, r+delta, color = color, alpha = 0.4)
+        plt.xlabel('time')
+        plt.ylabel('F_s(k,t)')
+        plt.title('Self-intermediate Function')
+        plt.grid(True)
+        plt.ylim([0, 1])
+
+
+
+################################################
+
+
+def compareModels(simulationsList, paths, labels, colors):
+
+    for modId in simulationsList.shape[0]:
+
+        if modId > 0:
+            # rollout MSE
+            applyMSE_rollout(simulationsList[modId], simulationsList[0], display=True, color=colors[modId])
+
+        
+    plt.show()
+
+
+    for modId in simulationsList.shape[0]:
+
+        applyMSD(simulationsList[modId], dislpay=True, color=colors[modId])
+
+        
+    plt.show()
+
+
+    for modId in simulationsList.shape[0]:
+
+        applySelfScattering(simulationsList[modId], color=colors[modId], display=True)
+
+        
+    plt.show()
+
+
+################################################
+# one-step simulation stats / measure
+################################################
 
 def heatmap(values, positions, grid_size=(50, 50), plot_size=(8, 6), mode = 'max', display = True):
     """
@@ -332,82 +692,87 @@ def heatmap(values, positions, grid_size=(50, 50), plot_size=(8, 6), mode = 'max
 
 
 
-
-def MSE_rollout(roll, sim):
-    x = np.arange(roll.shape[0])
-    vals = ((roll - sim) ** 2).reshape(x.shape[0], -1)
-    y = np.mean(vals, axis=1)
-    std = np.std(vals, axis=1)
-
-    plt.plot(x, y, 'blue')
-    plt.fill_between(x, y-std, y+std, zorder=  2)
-    plt.xlabel('Time')
-    plt.ylabel('Rollout MSE')
-    plt.grid(zorder = 1)
-
-    return x, y
-
-
-
+################################################
+# Additional measures
 ################################################
 
 
-def errorsDiv(pred, gt):
+def showDegrees(data):
     
-    anglePred = np.arctan2(pred[:, 1], pred[:, 0])
-    angleGT = np.arctan2(gt[:, 1], gt[:, 0])
+    import features as ft
 
-    normPred = np.linalg.norm(pred, axis=-1)
-    normGT = np.linalg.norm(gt, axis=-1)
+    degreeList = []
 
-    errorNorm = np.abs(normPred - normGT)
-    errorAngle = np.abs(anglePred - angleGT)
+    x, y, attr, inds = ft.processSimulation(data)
 
-    return errorAngle, errorNorm
-
-
-
-################################################
-
-
-
-
-DEVICE = torch.cuda.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
-import features as ft
-from torch_geometric.data import Data
-from norm import normalizeGraph
-
-def oneStepSimulation(sim, model, radius = None, device = DEVICE):
-
-    # get the states
-
-    x, y, resD, resInd = ft.processSimulation(sim,radius=radius)
-    res = []
-    out = np.zeros_like(sim)
-    out[0, :, :] = sim[0, :, :]
     for i in range(len(x)):
-        pos = x[i][:, :2].cpu().detach().numpy()
-        s = Data(x = x[i][:, 2:], y = y[i], edge_attr = resD[i], edge_index = resInd[i])
-        s = normalizeGraph(s)
-        s = s.to(device)
-        speeds = model(s)
-        if (i+1) < out.shape[0]:
-            out[i+1, :, :] = pos + speeds
+        s = Data(x = x[i][:, 2:], y = y[i], edge_index = inds[i], edge_attr = attr[i])
 
-    
-    return out
+        degs = deg(s.edge_index[0, :], num_nodes=s.x.size(0))
+
+        degreeList.extend(degs.cpu().numpy().tolist())
 
 
-def errorPred(pred, gt):
-    
-    return np.abs(pred - gt)
+    degreeList = np.array(degreeList)
+    plt.hist(degreeList, bins = 'auto')
+    plt.xlabel('degree')
+    plt.ylabel('number of instances')
 
-
+    return degreeList
 
 
 ################################################
 
 
+def showDistancess(data):
+    
+    import features as ft
+
+    distList = []
+
+    x, y, attr, inds = ft.processSimulation(data)
+
+    for i in range(len(x)):
+        s = Data(x = x[i][:, 2:], y = y[i], edge_index = inds[i], edge_attr = attr[i])
+
+        dist = s.edge_attr[:, 0]
+
+        distList.extend(dist.cpu().numpy().tolist())  
 
 
+    degreeList = np.array(degreeList)
+    plt.hist(degreeList, bins = 'auto')
+    plt.xlabel('distances')
+    plt.ylabel('number of instances')
+
+    return degreeList
+
+################################################
+# supplementary functions
+################################################
+
+
+def plotBoxPlot(diff, vals, bins, xlabel = 'X values', ylabel = 'y values', showfliers = False):
+
+    groups = np.digitize(diff, bins)
+    grouped_errors = {i: [] for i in range(len(bins)+1)}
+
+    for idx, group in enumerate(groups):
+        grouped_errors[group].append(vals[idx])
+
+    
+    centers = [(bins[i] + bins[i+1]) / 2 for i in range(len(bins)-1)]
+    data_to_plot = [grouped_errors[k] for k in sorted(grouped_errors.keys())]
+    medians = [np.median(g) if g else 0 for g in data_to_plot]
+
+    boxprops = dict(linestyle='-', linewidth=2, color='black')  # Custom box properties
+    medianprops = dict(linestyle='-', linewidth=0, color='orange')  # Invisible median line
+    boxplot_elements = plt.boxplot(data_to_plot, positions=centers, boxprops=boxprops, medianprops=medianprops, showfliers=showfliers, widths = 0.2)
+
+    plt.plot(centers, medians, 'o-', color='orange', label='Medians')
+
+
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+
+    return medians

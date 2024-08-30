@@ -1,0 +1,110 @@
+cfg1:
+    simulation:
+        nbSimLearning: 200
+        nbValidation: 20
+        nbTest: 20
+        initialization: 'easy'    # random, easy, circle
+        initDistance: 8
+        initNb: 2
+        initNbPos: 10
+        parameters:
+            noisy: 1   # 0: not noisy, 1:noisy
+            nMin: 120
+            nMax: 300
+            v0: 60
+            k: 70
+            epsilon: 0.5
+            tau: 3.5
+            T: 1000
+            dt: 0.001
+            threshold: 6
+            R: 1
+            boundary: 120    
+
+    path:
+        simulationPath: '/scratch/users/jpierre/mew_0.001_noisy_v2'
+        
+        
+        
+cfg2:
+    simulation:
+        nbSimLearning: 200
+        nbValidation: 20
+        nbTest: 20
+        initialization: 'easy'    # random, easy, circle
+        initDistance: 8
+        initNb: 2
+        initNbPos: 10
+        parameters:
+            noisy: 0   # 0: not noisy, 1:noisy
+            nMin: 120
+            nMax: 300
+            v0: 60
+            k: 70
+            epsilon: 0.5
+            tau: 3.5
+            T: 1000
+            dt: 0.001
+            threshold: 6
+            R: 1
+            boundary: 120    
+
+    path:
+        simulationPath: '/scratch/users/jpierre/mew_0.001_normal_v2'
+        
+        
+        
+        
+cfg3:
+    simulation:
+        nbSimLearning: 200
+        nbValidation: 20
+        nbTest: 20
+        initialization: 'easy'    # random, easy, circle
+        initDistance: 8
+        initNb: 2
+        initNbPos: 10
+        parameters:
+            noisy: 1   # 0: not noisy, 1:noisy
+            nMin: 120
+            nMax: 300
+            v0: 60
+            k: 70
+            epsilon: 0.5
+            tau: 3.5
+            T: 1000
+            dt: 0.01
+            threshold: 6
+            R: 1
+            boundary: 120    
+
+    path:
+        simulationPath: '/scratch/users/jpierre/mew_0.01_noisy_v2'
+        
+        
+
+cfg4:
+    simulation:
+        nbSimLearning: 200
+        nbValidation: 20
+        nbTest: 20
+        initialization: 'easy'    # random, easy, circle, smallest
+        initDistance: 8
+        initNb: 2
+        initNbPos: 10
+        parameters:
+            noisy: 0   # 0: not noisy, 1:noisy
+            nMin: 120
+            nMax: 300
+            v0: 60
+            k: 70
+            epsilon: 0.5
+            tau: 3.5
+            T: 1000
+            dt: 0.01
+            threshold: 6
+            R: 1
+            boundary: 120    
+
+    path:
+        simulationPath: '/scratch/users/jpierre/mew_0.01_normal_v2'
