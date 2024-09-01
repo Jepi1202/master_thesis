@@ -264,6 +264,7 @@ def optimized_getGraph_th(mat_t, radius, threshold=6, device='cuda'):
     """
     Optimized function to compute the graph for PyTorch Geometric using PyTorch tensors.
 
+    gpt based
     Args:
     -----
         - `mat_t` (torch.Tensor): 2D torch tensor (matrix at a given timestep).
@@ -277,32 +278,26 @@ def optimized_getGraph_th(mat_t, radius, threshold=6, device='cuda'):
         - `indices` (torch.Tensor): Tensor of graph indices.
     """
     with torch.no_grad():
-        # Move tensors to the specified device
         mat_t = mat_t.to(device)
         radius = radius.to(device)
         
         num_points = mat_t.shape[0]
         
-        # Expand dims to broadcast and compute all pairwise distances
         mat_expanded = mat_t.unsqueeze(1)  # Shape: [N, 1, 2]
         all_dists = torch.sqrt(torch.sum((mat_expanded - mat_t) ** 2, dim=2))  # Shape: [N, N]
 
-        # Identify pairs below the threshold, excluding diagonal
         ix, iy = torch.triu_indices(num_points, num_points, offset=1, device=device)
         valid_pairs = all_dists[ix, iy] < threshold
 
-        # Filter pairs by distance threshold
         filtered_ix = ix[valid_pairs]
         filtered_iy = iy[valid_pairs]
         distances = all_dists[filtered_ix, filtered_iy]
 
-        # Calculate direction vectors
         direction_vectors = (mat_t[filtered_iy] - mat_t[filtered_ix]) / distances.unsqueeze(1)
 
         radii_i = radius[filtered_ix]
         radii_j = radius[filtered_iy]
 
-        # Double entries for bidirectional edges
         doubled_indices = torch.cat([
             torch.stack([filtered_ix, filtered_iy], dim=1),
             torch.stack([filtered_iy, filtered_ix], dim=1)
@@ -313,7 +308,6 @@ def optimized_getGraph_th(mat_t, radius, threshold=6, device='cuda'):
             torch.stack([distances, -direction_vectors[:, 0], -direction_vectors[:, 1], radii_j, radii_i], dim=1)
         ], dim=0)
 
-        # Convert to tensors (already in tensor form, but ensuring shape)
         indices_tensor = doubled_indices.T.to(torch.long)
         dist_tensor = doubled_dist_vectors.to(torch.float)
 

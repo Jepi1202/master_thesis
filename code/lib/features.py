@@ -314,6 +314,8 @@ def optimized_getGraph(mat_t, radius, threshold=THRESHOLD_DIST):
     """
     Optimized function to compute the graph for PyTorch Geometric.
 
+    gpt based 
+
     Args:
     -----
         - `mat_t` (np.array): 2D np array (matrix at a given timestep)
@@ -325,35 +327,27 @@ def optimized_getGraph(mat_t, radius, threshold=THRESHOLD_DIST):
         - `indices` (torch.Tensor): Tensor of graph indices.
     """
     num_points = mat_t.shape[0]
-    # Expand dims to broadcast and compute all pairwise distances
     mat_expanded = np.expand_dims(mat_t, 1)  # Shape: [N, 1, 2]
     all_dists = np.sqrt(np.sum((mat_expanded - mat_t)**2, axis=2))  # Shape: [N, N]
 
-    # Identify pairs below the threshold, excluding diagonal
     ix, iy = np.triu_indices(num_points, k=1)
     valid_pairs = all_dists[ix, iy] < threshold
 
-    # Filter pairs by distance threshold
     filtered_ix, filtered_iy = ix[valid_pairs], iy[valid_pairs]
     distances = all_dists[filtered_ix, filtered_iy]
 
-    # Calculate direction vectors and angles
     direction_vectors = (mat_t[filtered_iy] - mat_t[filtered_ix]) / distances[:, None] 
 
     radii_i = radius[filtered_ix]
     radii_j = radius[filtered_iy]
 
 
-    # Normalize distances and create distance vectors
-
-    # Double entries for bidirectional edges
     doubled_indices = np.vstack([np.stack([filtered_ix, filtered_iy], axis=1),
                                  np.stack([filtered_iy, filtered_ix], axis=1)])
     
     doubled_dist_vectors = np.vstack([np.stack([distances, direction_vectors[:, 0], direction_vectors[:, 1], radii_i, radii_j], axis=1),
                                       np.stack([distances, -direction_vectors[:, 0], -direction_vectors[:, 1], radii_j, radii_i], axis=1)])
 
-    # Convert to tensors
     indices_tensor = torch.tensor(doubled_indices.T, dtype=torch.long)
     dist_tensor = torch.tensor(doubled_dist_vectors, dtype=torch.float)
 
